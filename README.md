@@ -202,3 +202,35 @@ Building the plugin requires Go 1.27.0 or newer.
 ```bash
 CGO_ENABLED=0 go build -o zabbix-dnf-plugin ./cmd/agent
 ```
+
+## Commands executed
+
+The plugin uses the host's enabled DNF repositories and their configured URLs.
+
+```bash
+# List enabled repositories
+dnf --assumeno -q repolist
+
+# Query the latest available updates, optionally by advisory type
+dnf --assumeno -q '--setopt=*.skip_if_unavailable=False' repoquery --upgrades [--security|--bugfix|--enhancement] --latest-limit=1 --queryformat '%{name}|%{epoch}|%{version}|%{release}|%{arch}|%{repoid}\n'
+
+# Detect the installed DNF version
+dnf --assumeno --version
+
+# List DNF transactions.
+dnf --assumeno -q history list [--json]
+
+# Inspect one DNF transaction
+dnf --assumeno -q history info TRANSACTION_ID [--json]
+
+# Read package installation times for reboot detection
+rpm -qa --qf '%{NAME}|%{INSTALLTIME}\n'
+
+# List installed kernels for reboot detection
+rpm -qa --qf '%{NAME}|%{VERSION}-%{RELEASE}.%{ARCH}\n' 'kernel*'
+
+# Read the running kernel version
+uname -r
+```
+
+The update query runs once without an advisory flag and once for each listed classification. JSON history output is used when supported by DNF5.
