@@ -1,0 +1,221 @@
+name: DNF Integration
+
+on:
+  workflow_call:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dnf:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: UBI 8 / DNF
+            image: registry.access.redhat.com/ubi8/ubi:latest
+            dockerfile: .dev/Dockerfile.ubi
+            build-args: UBI_VERSION=8 UBI_TAG=latest
+          - name: UBI 9 / DNF
+            image: registry.access.redhat.com/ubi9/ubi:latest
+            dockerfile: .dev/Dockerfile.ubi
+            build-args: UBI_VERSION=9 UBI_TAG=latest
+          - name: UBI 10 / DNF
+            image: registry.access.redhat.com/ubi10/ubi:latest
+            dockerfile: .dev/Dockerfile.ubi
+            build-args: UBI_VERSION=10 UBI_TAG=latest
+          - name: Fedora 43 / DNF5
+            image: fedora:43
+            dockerfile: .dev/Dockerfile.dnf
+            build-args: BASE_IMAGE=fedora:43 ZABBIX_RHEL_VERSION=10
+          - name: Fedora 44 / DNF5
+            image: fedora:44
+            dockerfile: .dev/Dockerfile.dnf
+            build-args: BASE_IMAGE=fedora:44 ZABBIX_RHEL_VERSION=10
+          - name: Rocky Linux 9 / DNF
+            image: rockylinux/rockylinux:9
+            dockerfile: .dev/Dockerfile.dnf
+            build-args: BASE_IMAGE=rockylinux/rockylinux:9 ZABBIX_RHEL_VERSION=9
+          - name: Rocky Linux 10 / DNF
+            image: rockylinux/rockylinux:10
+            dockerfile: .dev/Dockerfile.dnf
+            build-args: BASE_IMAGE=rockylinux/rockylinux:10 ZABBIX_RHEL_VERSION=10
+          - name: AlmaLinux 9 / DNF
+            image: almalinux:9
+            dockerfile: .dev/Dockerfile.dnf
+            build-args: BASE_IMAGE=almalinux:9 ZABBIX_RHEL_VERSION=9
+          - name: AlmaLinux 10 / DNF
+            image: almalinux:10
+            dockerfile: .dev/Dockerfile.dnf
+            build-args: BASE_IMAGE=almalinux:10 ZABBIX_RHEL_VERSION=10
+          - name: CentOS Stream 9 / DNF
+            image: quay.io/centos/centos:stream9
+            dockerfile: .dev/Dockerfile.dnf
+            build-args: BASE_IMAGE=quay.io/centos/centos:stream9 ZABBIX_RHEL_VERSION=9
+          - name: CentOS Stream 10 / DNF
+            image: quay.io/centos/centos:stream10
+            dockerfile: .dev/Dockerfile.dnf
+            build-args: BASE_IMAGE=quay.io/centos/centos:stream10 ZABBIX_RHEL_VERSION=10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build integration test
+        run: CGO_ENABLED=0 go test -tags=integration -c -o dnf-integration.test ./integration
+
+      - name: Run DNF integration test
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker pull "$IMAGE"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/src:ro" \
+            --workdir /src \
+            "$IMAGE" \
+            /bin/bash -lc '
+              set -eu
+              dnf -q makecache
+              command -v dnf
+              command -v rpm
+              command -v uname
+              ./dnf-integration.test -test.v -test.run "^TestDNFSmoke$"
+            '
+
+      - name: Build Agent 2 image through installer
+        env:
+          BUILD_ARGS: ${{ matrix.build-args }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          build_args=()
+          for argument in $BUILD_ARGS; do
+            build_args+=(--build-arg "$argument")
+          done
+          docker build \
+            --file "$DOCKERFILE" \
+            "${build_args[@]}" \
+            --tag zabbix-dnf-plugin:integration \
+            .
+
+      - name: Test installed Agent 2 plugin
+        run: |
+          output="$(docker run --rm \
+            --user zabbix \
+            --entrypoint /usr/sbin/zabbix_agent2 \
+            zabbix-dnf-plugin:integration \
+            -c /etc/zabbix/zabbix_agent2.conf \
+            -t dnf.get)"
+          case "$output" in
+            *"[s|"*'"collection":{"complete":true'*) ;;
+            *)
+              printf 'dnf.get did not return a complete collection: %s\n' "$output" >&2
+              exit 1
+              ;;
+          esac
+          printf '%s\n' "$output"
+
+  agent2:
+    name: Zabbix Agent 2 ${{ matrix.version }} / ${{ matrix.history }} history
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: 7.0.5
+            image: zabbix/zabbix-agent2:alpine-7.0.5
+            history: populated
+          - version: latest 7.0
+            image: zabbix/zabbix-agent2:alpine-7.0-latest
+            history: empty
+          - version: latest 7.0
+            image: zabbix/zabbix-agent2:alpine-7.0-latest
+            history: populated
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build plugin
+        run: CGO_ENABLED=0 go build -o zabbix-dnf-plugin ./cmd/agent
+
+      - name: Test Agent 2 plugin socket protocol
+        env:
+          AGENT_IMAGE: ${{ matrix.image }}
+          FAKE_DNF_HISTORY: ${{ matrix.history }}
+        run: |
+          chmod +x .github/ci/zabbix-agent2/fakebin/*
+          docker pull "$AGENT_IMAGE"
+          started=$SECONDS
+          output="$(docker run --rm \
+            --user zabbix \
+            --env FAKE_DNF_HISTORY \
+            --volume "$GITHUB_WORKSPACE/zabbix-dnf-plugin:/tmp/zabbix-dnf-plugin:ro" \
+            --volume "$GITHUB_WORKSPACE/.github/ci/zabbix-agent2/dnf.conf:/etc/zabbix/zabbix_agent2.d/plugins.d/dnf.conf:ro" \
+            --volume "$GITHUB_WORKSPACE/.github/ci/zabbix-agent2/fakebin:/tmp/fakebin:ro" \
+            "$AGENT_IMAGE" \
+            /bin/sh -c 'PATH=/tmp/fakebin:$PATH zabbix_agent2 -t dnf.get')"
+          duration=$((SECONDS - started))
+          if (( duration >= 20 )); then
+            printf 'collection took %d seconds; release threshold is below 20 seconds\n' "$duration" >&2
+            exit 1
+          fi
+
+          OUTPUT="$output" python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          output = os.environ["OUTPUT"]
+          match = re.search(r"dnf\.get\s+\[s\|(\{.*\})\]\s*$", output, re.DOTALL)
+          if match is None:
+              raise SystemExit(f"dnf.get did not return a supported string value: {output!r}")
+
+          payload = json.loads(match.group(1))
+          assert payload["classification"] == {
+              "complete": True,
+              "failed_categories": [],
+          }
+          assert payload["summary"]["repositories"] == 1
+          assert payload["summary"]["updates"] == 1
+          assert payload["summary"]["update_types"] == {
+              "security": 0,
+              "bugfix": 0,
+              "enhancement": 0,
+              "other": 1,
+          }
+          assert payload["repositories"] == [{
+              "id": "test",
+              "name": "Test repository",
+              "update_count": 1,
+          }]
+          assert payload["updates"][0]["name"] == "example"
+
+          last_update = payload["summary"]["last_update"]
+          if os.environ["FAKE_DNF_HISTORY"] == "populated":
+              assert last_update["result"] == "success"
+          else:
+              assert last_update == {
+                  "timestamp": None,
+                  "result": "not_recorded",
+              }
+          PY
+
+          printf '%s\n' "$output"
+          printf 'collection completed in %d seconds\n' "$duration"

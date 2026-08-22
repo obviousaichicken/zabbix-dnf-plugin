@@ -1,0 +1,40 @@
+ARG BASE_IMAGE=fedora:44
+
+FROM golang:1.27 AS builder
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/zabbix-dnf-plugin ./cmd/agent && \
+    cd /out && \
+    sha256sum zabbix-dnf-plugin > zabbix-dnf-plugin.sha256
+
+FROM ${BASE_IMAGE}
+
+ARG ZABBIX_RHEL_VERSION=10
+ARG AGENT_CONFIG=.dev/zabbix_agent2.conf
+
+# Use the matching Zabbix EL package when no distribution-specific package exists.
+RUN dnf install -y \
+        "https://repo.zabbix.com/zabbix/7.0/rhel/${ZABBIX_RHEL_VERSION}/x86_64/zabbix-release-latest.el${ZABBIX_RHEL_VERSION}.noarch.rpm" && \
+    dnf install -y --setopt=install_weak_deps=False util-linux zabbix-agent2 && \
+    dnf clean all && \
+    dnf -q makecache
+
+RUN install -d -m 0755 -o zabbix -g zabbix /var/lib/zabbix
+ENV HOME=/var/lib/zabbix
+
+COPY ${AGENT_CONFIG} /etc/zabbix/zabbix_agent2.conf
+COPY dnf.conf /tmp/release/dnf.conf
+COPY install.sh /tmp/install.sh
+COPY --from=builder /out/ /tmp/release/
+
+RUN RELEASE_URL=file:///tmp/release SKIP_SERVICE_RESTART=1 /tmp/install.sh && \
+    rm -rf /tmp/install.sh /tmp/release
+
+EXPOSE 10050
+
+ENTRYPOINT ["/usr/sbin/zabbix_agent2", "-f", "-c", "/etc/zabbix/zabbix_agent2.conf"]

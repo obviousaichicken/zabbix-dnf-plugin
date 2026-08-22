@@ -1,0 +1,87 @@
+name: Checks
+
+on:
+  workflow_call:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run Tests
+        run: go test ./...
+
+      - name: Run Race Tests
+        run: go test -race ./...
+
+      - name: Run Vet
+        run: go vet ./...
+
+      - name: Check installer syntax
+        run: sh -n install.sh
+
+      - name: Check vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Check modules
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+  template:
+    name: Validate Zabbix template
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Start Zabbix
+        run: |
+          docker compose \
+            --env-file .dev/.env \
+            -f .dev/docker-compose.yaml \
+            up -d zbx70_database zbx70_server zbx70_web
+
+      - name: Import and validate template
+        run: |
+          docker compose \
+            --env-file .dev/.env \
+            -f .dev/docker-compose.yaml \
+            run --rm --no-deps \
+            -e ZBX_TEMPLATE_ONLY=1 \
+            zbx70_bootstrap
+
+      - name: Show Zabbix logs on failure
+        if: failure()
+        run: |
+          docker compose \
+            --env-file .dev/.env \
+            -f .dev/docker-compose.yaml \
+            logs --no-color \
+            zbx70_database zbx70_server zbx70_web
+
+      - name: Stop Zabbix
+        if: always()
+        run: |
+          docker compose \
+            --env-file .dev/.env \
+            -f .dev/docker-compose.yaml \
+            down -v --remove-orphans

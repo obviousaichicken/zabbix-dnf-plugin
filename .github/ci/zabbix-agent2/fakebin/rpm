@@ -1,0 +1,10 @@
+#!/bin/sh
+
+case "$*" in
+  *INSTALLTIME*)
+    printf 'bash|1\n'
+    ;;
+  *)
+    exit 0
+    ;;
+esac

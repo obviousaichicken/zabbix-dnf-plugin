@@ -1,0 +1,946 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 846977d1dfed4968bc5f8bdb363285bc
+      name: 'Templates/Operating systems'
+  templates:
+    - uuid: cd1513ce75e54662a2dbe3d676c4e6aa
+      template: 'DNF by Zabbix agent 2'
+      name: 'DNF by Zabbix agent 2'
+      description: |
+        Monitors enabled DNF repositories, available package updates, advisory categories, reboot status, and package update history through the Zabbix DNF Plugin for Agent 2.
+
+        The plugin intentionally fails the master item rather than publishing partial data when repository or advisory classification queries fail. The "other" update category includes packages with missing or unrecognized advisory metadata and does not necessarily mean non-security updates.
+      groups:
+        - name: 'Templates/Operating systems'
+      items:
+        - uuid: 361f3f08c10e4ce9aef5d78b98c0492a
+          name: 'DNF: Get update data'
+          type: ZABBIX_PASSIVE
+          key: dnf.get
+          delay: '{$DNF.UPDATE.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Collects the complete package, repository, advisory, reboot, and update-history payload. The raw JSON is not retained because dependent items extract the monitored values.'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+            - tag: component
+              value: updates
+        - uuid: 3fd9d579bf414eb094f11f6ff9cb0e0a
+          name: 'DNF: Collection complete'
+          type: DEPENDENT
+          key: dnf.collection.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether the plugin completed every required DNF query. Failed collections make the master item unsupported and are also detected by the no-data condition.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 72eac0e05b1046798bef54e9fec9e9bb
+              expression: 'last(/DNF by Zabbix agent 2/dnf.collection.complete)=0 or nodata(/DNF by Zabbix agent 2/dnf.collection.complete,{$DNF.NODATA.TIME})=1'
+              name: 'DNF: Collection is unavailable'
+              opdata: 'Last collection status: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'DNF update data is stale or unavailable until collection succeeds.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: availability
+        - uuid: a5bd29e5713f43c3a340f31ac85d2541
+          name: 'DNF: Collection duration'
+          type: DEPENDENT
+          key: dnf.collection.duration
+          value_type: FLOAT
+          units: s
+          description: 'Time spent collecting the complete DNF payload, in seconds.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.duration_ms
+            - type: MULTIPLIER
+              parameters:
+                - '0.001'
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: b3ba6d2f74db4360b4ac3eda6e965a8f
+              expression: 'avg(/DNF by Zabbix agent 2/dnf.collection.duration,{$DNF.COLLECTION.DURATION.WINDOW})>{$DNF.COLLECTION.DURATION.MAX}'
+              name: 'DNF: Collection is slow'
+              opdata: 'Collection duration: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The average collection duration is approaching the hard plugin and item timeout. Check repository availability and DNF performance.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: performance
+        - uuid: 8caac172573b41a8bd9bde476fd22250
+          name: 'DNF: Advisory classification complete'
+          type: DEPENDENT
+          key: dnf.classification.complete
+          value_type: UNSIGNED
+          description: 'Indicates that all advisory categories were classified successfully. Strict classification failures make the master collection fail instead of publishing partial category counts.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.classification.complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: e7b607ef89c241f3adf45e8542dccc87
+          name: 'DNF: Updates pending total'
+          type: DEPENDENT
+          key: dnf.updates
+          value_type: UNSIGNED
+          description: 'Total number of available package updates across all enabled repositories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.updates
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 62481a3967dd4c1588520ace8d56e0bb
+          name: 'DNF: Enabled repositories'
+          type: DEPENDENT
+          key: dnf.repositories
+          value_type: UNSIGNED
+          description: 'Number of enabled DNF repositories included in the collection.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.repositories
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: d2f1c6fa818148eda68f2d29784e3548
+          name: 'DNF: Updates pending'
+          type: DEPENDENT
+          key: dnf.updates.pending
+          value_type: UNSIGNED
+          description: 'Indicates whether one or more package updates are available.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.updates_pending
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 6307a68026e44b628840bfc5265b43b3
+          name: 'DNF: Reboot pending'
+          type: DEPENDENT
+          key: dnf.reboot.pending
+          value_type: UNSIGNED
+          description: 'Indicates whether installed reboot-sensitive packages or a newer installed kernel require the host to be rebooted.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.reboot_pending
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: d1495d7325394f338fcb47a13061ab66
+              expression: 'last(/DNF by Zabbix agent 2/dnf.reboot.pending)=1'
+              name: 'DNF: Reboot is required'
+              opdata: 'Reboot pending: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'A reboot is required to complete package updates.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: maintenance
+        - uuid: e0609656a37a41ee85167deaca207f71
+          name: 'DNF: Updates pending security'
+          type: DEPENDENT
+          key: dnf.updates.security
+          value_type: UNSIGNED
+          description: 'Number of available package updates classified by repository advisory metadata as security updates.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'Advisory classification is incomplete';
+                  }
+                  return data.summary.update_types.security;
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 4b8f3367f52e437aa7ffbb78f34b19fc
+              expression: 'last(/DNF by Zabbix agent 2/dnf.updates.security)>={$DNF.SECURITY.MIN}'
+              name: 'DNF: Security updates are available'
+              opdata: 'Security updates: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'One or more security updates are available.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: security
+        - uuid: dcf7f4a5ef984d3a82999e7c3828453b
+          name: 'DNF: Updates pending bugfix'
+          type: DEPENDENT
+          key: dnf.updates.bugfix
+          value_type: UNSIGNED
+          description: 'Number of available package updates classified by repository advisory metadata as bug fixes.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'Advisory classification is incomplete';
+                  }
+                  return data.summary.update_types.bugfix;
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 5909a4d42d6b4997855d8d043b20b093
+          name: 'DNF: Updates pending enhancement'
+          type: DEPENDENT
+          key: dnf.updates.enhancement
+          value_type: UNSIGNED
+          description: 'Number of available package updates classified by repository advisory metadata as enhancements.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'Advisory classification is incomplete';
+                  }
+                  return data.summary.update_types.enhancement;
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: d7293d7d3c8f4e8681e86977391b2940
+          name: 'DNF: Updates pending other'
+          type: DEPENDENT
+          key: dnf.updates.other
+          value_type: UNSIGNED
+          description: 'Number of available package updates with no supported advisory category. This can include missing or unrecognized advisory metadata and does not necessarily mean non-security updates.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'Advisory classification is incomplete';
+                  }
+                  return data.summary.update_types.other;
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 12a81e56d11040f9a7439a7bd4b8c729
+          name: 'DNF: Last update result'
+          type: DEPENDENT
+          key: dnf.last_update.result
+          value_type: UNSIGNED
+          history: 7d
+          trends: '0'
+          description: 'Result of the most recent completed DNF transaction that upgraded a package: 0 means not recorded, 1 means success, and 2 means failed.'
+          valuemap:
+            name: 'DNF: Update result'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  var results = {
+                    not_recorded: 0,
+                    success: 1,
+                    failed: 2
+                  };
+                  var result = data.summary.last_update.result;
+
+                  if (!Object.prototype.hasOwnProperty.call(results, result)) {
+                    throw 'Unsupported last update result: ' + result;
+                  }
+
+                  return results[result];
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 61c543d10fcd4b91a07b1dfdf51aab15
+              expression: 'last(/DNF by Zabbix agent 2/dnf.last_update.result)=2'
+              name: 'DNF: Last package update failed'
+              opdata: 'Last update result: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The most recent package update transaction did not complete successfully.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: update_history
+        - uuid: 4a8e064bca374014aef4696de773cf6b
+          name: 'DNF: Last update time'
+          type: DEPENDENT
+          key: dnf.last_update.timestamp
+          value_type: UNSIGNED
+          units: unixtime
+          trends: '0'
+          description: 'Unix timestamp of the most recent completed DNF transaction that upgraded a package. No value is stored when no such transaction exists.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (data.summary.last_update.timestamp === null) {
+                    return null;
+                  }
+
+                  var timestamp = Date.parse(data.summary.last_update.timestamp);
+                  if (isNaN(timestamp)) {
+                    throw 'Invalid last update timestamp';
+                  }
+
+                  return Math.floor(timestamp / 1000);
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+      discovery_rules:
+        - uuid: 7f462a6012114cfd95e1e18768942f05
+          name: 'DNF: Repository discovery'
+          type: DEPENDENT
+          key: dnf.repository
+          delay: '0'
+          lifetime_type: DELETE_AFTER
+          lifetime: 30d
+          enabled_lifetime_type: DISABLE_IMMEDIATELY
+          enabled_lifetime: '0'
+          description: 'Discovers enabled DNF repositories. Items for repositories that disappear are disabled immediately and retained for 30 days before deletion.'
+          item_prototypes:
+            - uuid: a4768ffdaf7e4228abd8aaccc5bb726c
+              name: 'DNF: Repository [{#REPO_NAME}]: Available update count'
+              type: DEPENDENT
+              key: 'dnf.repository.updates["{#REPO_ID}"]'
+              delay: '0'
+              value_type: UNSIGNED
+              description: 'Number of available package updates from repository {#REPO_NAME} ({#REPO_ID}).'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.repositories[?(@.id == "{#REPO_ID}")].update_count.first()'
+              master_item:
+                key: dnf.get
+              tags:
+                - tag: component
+                  value: updates
+                - tag: repository
+                  value: '{#REPO_ID}'
+                - tag: repository_name
+                  value: '{#REPO_NAME}'
+            - uuid: 670f6c170822419692948b5d4e500e40
+              name: 'DNF: Repository [{#REPO_NAME}]: Pending package details'
+              type: DEPENDENT
+              key: 'dnf.repository.update.details["{#REPO_ID}"]'
+              delay: '0'
+              history: 1d
+              value_type: TEXT
+              trends: '0'
+              description: 'Comma-separated NEVRA identifiers for packages with available updates from repository {#REPO_NAME} ({#REPO_ID}). The value is blank when there are no pending packages.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.updates[?(@.repository_id == "{#REPO_ID}")]'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '[]'
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var updates = JSON.parse(value);
+                      var packages = [];
+
+                      for (var i = 0; i < updates.length; i++) {
+                        var update = updates[i];
+                        var epoch = update.epoch && update.epoch !== '(none)'
+                          ? update.epoch + ':'
+                          : '';
+                        var nevra = update.name + '-' + epoch + update.version
+                          + '-' + update.release + '.' + update.arch;
+
+                        if (packages.indexOf(nevra) === -1) {
+                          packages.push(nevra);
+                        }
+                      }
+
+                      return packages.join(', ');
+              master_item:
+                key: dnf.get
+              tags:
+                - tag: component
+                  value: updates
+                - tag: repository
+                  value: '{#REPO_ID}'
+                - tag: repository_name
+                  value: '{#REPO_NAME}'
+          master_item:
+            key: dnf.get
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.repositories
+          lld_macro_paths:
+            - lld_macro: '{#REPO_ID}'
+              path: $.id
+            - lld_macro: '{#REPO_NAME}'
+              path: $.name
+      macros:
+        - macro: '{$DNF.COLLECTION.DURATION.MAX}'
+          value: '20'
+          description: 'Maximum acceptable average collection duration, in seconds.'
+        - macro: '{$DNF.COLLECTION.DURATION.WINDOW}'
+          value: 30m
+          description: 'Evaluation window for the average collection duration.'
+        - macro: '{$DNF.NODATA.TIME}'
+          value: 30m
+          description: 'Time without a successful collection before an availability problem is raised.'
+        - macro: '{$DNF.SECURITY.MIN}'
+          value: '1'
+          description: 'Minimum number of security updates that raises a problem.'
+        - macro: '{$DNF.UPDATE.INTERVAL}'
+          value: 15m
+          description: 'Interval between complete DNF collections.'
+      valuemaps:
+        - uuid: 62a14312cd71491cab29b01d120c7cd4
+          name: 'DNF: No/Yes'
+          mappings:
+            - value: '0'
+              newvalue: 'No'
+            - value: '1'
+              newvalue: 'Yes'
+        - uuid: 9feda965a52f4e8daf26c1392597e48f
+          name: 'DNF: Update result'
+          mappings:
+            - value: '0'
+              newvalue: 'Not recorded'
+            - value: '1'
+              newvalue: 'Success'
+            - value: '2'
+              newvalue: 'Failed'
+    - uuid: eb3a823ea3784625ad4ebf81a2e075cb
+      template: 'DNF by Zabbix agent 2 active'
+      name: 'DNF by Zabbix agent 2 active'
+      description: |
+        Monitors enabled DNF repositories, available package updates, advisory categories, reboot status, and package update history through the Zabbix DNF Plugin for Agent 2.
+
+        The plugin intentionally fails the master item rather than publishing partial data when repository or advisory classification queries fail. The "other" update category includes packages with missing or unrecognized advisory metadata and does not necessarily mean non-security updates.
+      groups:
+        - name: 'Templates/Operating systems'
+      items:
+        - uuid: f57b5a29ead94a4e88a7920a5f9fea4e
+          name: 'DNF: Get update data'
+          type: ZABBIX_ACTIVE
+          key: dnf.get
+          delay: '{$DNF.UPDATE.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Collects the complete package, repository, advisory, reboot, and update-history payload. The raw JSON is not retained because dependent items extract the monitored values.'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+            - tag: component
+              value: updates
+        - uuid: 1f91658bdd5f414e8f6f8c88867e8d5f
+          name: 'DNF: Collection complete'
+          type: DEPENDENT
+          key: dnf.collection.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether the plugin completed every required DNF query. Failed collections make the master item unsupported and are also detected by the no-data condition.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: b0d4a6a741f947b2beb6a65e435a9465
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.collection.complete)=0 or nodata(/DNF by Zabbix agent 2 active/dnf.collection.complete,{$DNF.NODATA.TIME})=1'
+              name: 'DNF: Collection is unavailable'
+              opdata: 'Last collection status: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'DNF update data is stale or unavailable until collection succeeds.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: availability
+        - uuid: ac8526792ded4d1b801656787f4964bb
+          name: 'DNF: Collection duration'
+          type: DEPENDENT
+          key: dnf.collection.duration
+          value_type: FLOAT
+          units: s
+          description: 'Time spent collecting the complete DNF payload, in seconds.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.duration_ms
+            - type: MULTIPLIER
+              parameters:
+                - '0.001'
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 21aa180342244d9e86b401625b674cd8
+              expression: 'avg(/DNF by Zabbix agent 2 active/dnf.collection.duration,{$DNF.COLLECTION.DURATION.WINDOW})>{$DNF.COLLECTION.DURATION.MAX}'
+              name: 'DNF: Collection is slow'
+              opdata: 'Collection duration: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The average collection duration is approaching the hard plugin and item timeout. Check repository availability and DNF performance.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: performance
+        - uuid: 1f1767220bec49a1b8493cc529d70c2f
+          name: 'DNF: Advisory classification complete'
+          type: DEPENDENT
+          key: dnf.classification.complete
+          value_type: UNSIGNED
+          description: 'Indicates that all advisory categories were classified successfully. Strict classification failures make the master collection fail instead of publishing partial category counts.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.classification.complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: e4b332b3b8874802858e4a9db98aec29
+          name: 'DNF: Updates pending total'
+          type: DEPENDENT
+          key: dnf.updates
+          value_type: UNSIGNED
+          description: 'Total number of available package updates across all enabled repositories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.updates
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: df35fac297f14252a4124bb0e2849022
+          name: 'DNF: Enabled repositories'
+          type: DEPENDENT
+          key: dnf.repositories
+          value_type: UNSIGNED
+          description: 'Number of enabled DNF repositories included in the collection.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.repositories
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: c8f48e54bdfa4fe1913bd81320ec04a3
+          name: 'DNF: Updates pending'
+          type: DEPENDENT
+          key: dnf.updates.pending
+          value_type: UNSIGNED
+          description: 'Indicates whether one or more package updates are available.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.updates_pending
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 3fa58ceafc284f35ad60d049941a53ab
+          name: 'DNF: Reboot pending'
+          type: DEPENDENT
+          key: dnf.reboot.pending
+          value_type: UNSIGNED
+          description: 'Indicates whether installed reboot-sensitive packages or a newer installed kernel require the host to be rebooted.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.reboot_pending
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 203008baa01b4be5bdb9c7bb77e10a2a
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.reboot.pending)=1'
+              name: 'DNF: Reboot is required'
+              opdata: 'Reboot pending: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'A reboot is required to complete package updates.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: maintenance
+        - uuid: 2c69a75cfcbb4e6cb944eb5f0cfd9bf8
+          name: 'DNF: Updates pending security'
+          type: DEPENDENT
+          key: dnf.updates.security
+          value_type: UNSIGNED
+          description: 'Number of available package updates classified by repository advisory metadata as security updates.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'Advisory classification is incomplete';
+                  }
+                  return data.summary.update_types.security;
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 27d39e0011fb42d7b1b0e9b20fe1675d
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.updates.security)>={$DNF.SECURITY.MIN}'
+              name: 'DNF: Security updates are available'
+              opdata: 'Security updates: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'One or more security updates are available.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: security
+        - uuid: 21df4041e24d4a9fb1405ad813b4bae2
+          name: 'DNF: Updates pending bugfix'
+          type: DEPENDENT
+          key: dnf.updates.bugfix
+          value_type: UNSIGNED
+          description: 'Number of available package updates classified by repository advisory metadata as bug fixes.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'Advisory classification is incomplete';
+                  }
+                  return data.summary.update_types.bugfix;
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: bd826ee414af47e89627b7eeacd20f36
+          name: 'DNF: Updates pending enhancement'
+          type: DEPENDENT
+          key: dnf.updates.enhancement
+          value_type: UNSIGNED
+          description: 'Number of available package updates classified by repository advisory metadata as enhancements.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'Advisory classification is incomplete';
+                  }
+                  return data.summary.update_types.enhancement;
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 2a68cb941b9246d0b2d359bc7fd09437
+          name: 'DNF: Updates pending other'
+          type: DEPENDENT
+          key: dnf.updates.other
+          value_type: UNSIGNED
+          description: 'Number of available package updates with no supported advisory category. This can include missing or unrecognized advisory metadata and does not necessarily mean non-security updates.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'Advisory classification is incomplete';
+                  }
+                  return data.summary.update_types.other;
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: ee58f88d08984b94b80f18d9a959a582
+          name: 'DNF: Last update result'
+          type: DEPENDENT
+          key: dnf.last_update.result
+          value_type: UNSIGNED
+          history: 7d
+          trends: '0'
+          description: 'Result of the most recent completed DNF transaction that upgraded a package: 0 means not recorded, 1 means success, and 2 means failed.'
+          valuemap:
+            name: 'DNF: Update result'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  var results = {
+                    not_recorded: 0,
+                    success: 1,
+                    failed: 2
+                  };
+                  var result = data.summary.last_update.result;
+
+                  if (!Object.prototype.hasOwnProperty.call(results, result)) {
+                    throw 'Unsupported last update result: ' + result;
+                  }
+
+                  return results[result];
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 7f3a7d894529462eac162af169587d58
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.last_update.result)=2'
+              name: 'DNF: Last package update failed'
+              opdata: 'Last update result: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The most recent package update transaction did not complete successfully.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: update_history
+        - uuid: b086e2d62446445cb05ce7d2b27d1606
+          name: 'DNF: Last update time'
+          type: DEPENDENT
+          key: dnf.last_update.timestamp
+          value_type: UNSIGNED
+          units: unixtime
+          trends: '0'
+          description: 'Unix timestamp of the most recent completed DNF transaction that upgraded a package. No value is stored when no such transaction exists.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (data.summary.last_update.timestamp === null) {
+                    return null;
+                  }
+
+                  var timestamp = Date.parse(data.summary.last_update.timestamp);
+                  if (isNaN(timestamp)) {
+                    throw 'Invalid last update timestamp';
+                  }
+
+                  return Math.floor(timestamp / 1000);
+          master_item:
+            key: dnf.get
+          tags:
+            - tag: component
+              value: updates
+      discovery_rules:
+        - uuid: e399ab0fcd1f40acbce6ffde8c994bdd
+          name: 'DNF: Repository discovery'
+          type: DEPENDENT
+          key: dnf.repository
+          delay: '0'
+          lifetime_type: DELETE_AFTER
+          lifetime: 30d
+          enabled_lifetime_type: DISABLE_IMMEDIATELY
+          enabled_lifetime: '0'
+          description: 'Discovers enabled DNF repositories. Items for repositories that disappear are disabled immediately and retained for 30 days before deletion.'
+          item_prototypes:
+            - uuid: ce44985303844243a7a91d6c04320191
+              name: 'DNF: Repository [{#REPO_NAME}]: Available update count'
+              type: DEPENDENT
+              key: 'dnf.repository.updates["{#REPO_ID}"]'
+              delay: '0'
+              value_type: UNSIGNED
+              description: 'Number of available package updates from repository {#REPO_NAME} ({#REPO_ID}).'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.repositories[?(@.id == "{#REPO_ID}")].update_count.first()'
+              master_item:
+                key: dnf.get
+              tags:
+                - tag: component
+                  value: updates
+                - tag: repository
+                  value: '{#REPO_ID}'
+                - tag: repository_name
+                  value: '{#REPO_NAME}'
+            - uuid: 6bd0f599fe084ee698b71920ffa839f9
+              name: 'DNF: Repository [{#REPO_NAME}]: Pending package details'
+              type: DEPENDENT
+              key: 'dnf.repository.update.details["{#REPO_ID}"]'
+              delay: '0'
+              history: 1d
+              value_type: TEXT
+              trends: '0'
+              description: 'Comma-separated NEVRA identifiers for packages with available updates from repository {#REPO_NAME} ({#REPO_ID}). The value is blank when there are no pending packages.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.updates[?(@.repository_id == "{#REPO_ID}")]'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '[]'
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var updates = JSON.parse(value);
+                      var packages = [];
+
+                      for (var i = 0; i < updates.length; i++) {
+                        var update = updates[i];
+                        var epoch = update.epoch && update.epoch !== '(none)'
+                          ? update.epoch + ':'
+                          : '';
+                        var nevra = update.name + '-' + epoch + update.version
+                          + '-' + update.release + '.' + update.arch;
+
+                        if (packages.indexOf(nevra) === -1) {
+                          packages.push(nevra);
+                        }
+                      }
+
+                      return packages.join(', ');
+              master_item:
+                key: dnf.get
+              tags:
+                - tag: component
+                  value: updates
+                - tag: repository
+                  value: '{#REPO_ID}'
+                - tag: repository_name
+                  value: '{#REPO_NAME}'
+          master_item:
+            key: dnf.get
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.repositories
+          lld_macro_paths:
+            - lld_macro: '{#REPO_ID}'
+              path: $.id
+            - lld_macro: '{#REPO_NAME}'
+              path: $.name
+      macros:
+        - macro: '{$DNF.COLLECTION.DURATION.MAX}'
+          value: '20'
+          description: 'Maximum acceptable average collection duration, in seconds.'
+        - macro: '{$DNF.COLLECTION.DURATION.WINDOW}'
+          value: 30m
+          description: 'Evaluation window for the average collection duration.'
+        - macro: '{$DNF.NODATA.TIME}'
+          value: 30m
+          description: 'Time without a successful collection before an availability problem is raised.'
+        - macro: '{$DNF.SECURITY.MIN}'
+          value: '1'
+          description: 'Minimum number of security updates that raises a problem.'
+        - macro: '{$DNF.UPDATE.INTERVAL}'
+          value: 15m
+          description: 'Interval between complete DNF collections.'
+      valuemaps:
+        - uuid: 6cb3af8e0972445d8497cc80a05cdc71
+          name: 'DNF: No/Yes'
+          mappings:
+            - value: '0'
+              newvalue: 'No'
+            - value: '1'
+              newvalue: 'Yes'
+        - uuid: a1f497099b3f4177aa8b0b7a6a91a077
+          name: 'DNF: Update result'
+          mappings:
+            - value: '0'
+              newvalue: 'Not recorded'
+            - value: '1'
+              newvalue: 'Success'
+            - value: '2'
+              newvalue: 'Failed'

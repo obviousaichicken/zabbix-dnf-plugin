@@ -1,0 +1,37 @@
+#!/bin/sh
+
+case "$*" in
+  *--version*)
+    printf '%s\n' '4.14.0'
+    ;;
+  *repolist*)
+    printf '%s\n' \
+      'repo id repo name status' \
+      'test Test repository 1'
+    ;;
+  *'history info 7'*)
+    printf '%s\n' \
+      'Transaction ID : 7' \
+      'End time     : Wed Aug 19 21:14:08 2026' \
+      'Return-Code  : Success' \
+      'Packages Altered:' \
+      '    Upgrade  example-0:2.0-1.x86_64'
+    ;;
+  *'history list'*)
+    if [ "${FAKE_DNF_HISTORY:-populated}" = 'populated' ]; then
+      printf '%s\n' \
+        'ID | Command line | Date and time | Action(s) | Altered' \
+        ' 7 | update -y | 2026-08-19 21:14 | Upgrade | 1'
+    fi
+    ;;
+  *--security*|*--bugfix*|*--enhancement*)
+    # The update intentionally has no advisory metadata and remains "other".
+    exit 0
+    ;;
+  *repoquery*)
+    printf '%s\n' 'example|0|2.0|1|x86_64|test'
+    ;;
+  *)
+    exit 0
+    ;;
+esac

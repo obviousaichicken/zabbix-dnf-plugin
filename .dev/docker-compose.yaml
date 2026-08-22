@@ -1,0 +1,286 @@
+services:
+  zbx70_database:
+    image: mariadb:11.4
+    container_name: zbx70_database
+    environment:
+      MARIADB_DATABASE: ${ZBX_DB_NAME}
+      MARIADB_USER: ${ZBX_DB_USER}
+      MARIADB_PASSWORD: ${ZBX_DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${ZBX_DB_ROOT_PASSWORD}
+    volumes:
+      - zbx70_data:/var/lib/mysql
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_server:
+    image: zabbix/zabbix-server-mysql:alpine-7.0-latest
+    container_name: zbx70_server
+    environment:
+      DB_SERVER_HOST: zbx70_database
+      MYSQL_DATABASE: ${ZBX_DB_NAME}
+      MYSQL_USER: ${ZBX_DB_USER}
+      MYSQL_PASSWORD: ${ZBX_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${ZBX_DB_ROOT_PASSWORD}
+    depends_on:
+      - zbx70_database
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_web:
+    image: zabbix/zabbix-web-nginx-mysql:alpine-7.0-latest
+    container_name: zbx70_web
+    environment:
+      ZBX_SERVER_HOST: zbx70_server
+      ZBX_SESSION_NAME: zbx70
+      DB_SERVER_HOST: zbx70_database
+      MYSQL_DATABASE: ${ZBX_DB_NAME}
+      MYSQL_USER: ${ZBX_DB_USER}
+      MYSQL_PASSWORD: ${ZBX_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${ZBX_DB_ROOT_PASSWORD}
+      PHP_TZ: Europe/Amsterdam
+      ZBX_SERVER_NAME: "Zabbix 7.0"
+    depends_on:
+      - zbx70_database
+      - zbx70_server
+    ports:
+      - "7070:8080"
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_bootstrap:
+    image: python:3.13-alpine
+    container_name: zbx70_bootstrap
+    environment:
+      ZBX_API_URL: http://zbx70_web:8080/api_jsonrpc.php
+      ZBX_API_USER: ${ZBX_API_USER}
+      ZBX_API_PASSWORD: ${ZBX_API_PASSWORD}
+      ZBX_BOOTSTRAP_TIMEOUT: ${ZBX_BOOTSTRAP_TIMEOUT:-180}
+    volumes:
+      - ./bootstrap.py:/bootstrap/bootstrap.py:ro
+      - ../template-dnf-by-zabbix-agent2.yaml:/bootstrap/template-dnf-by-zabbix-agent2.yaml:ro
+    command: [ "python", "/bootstrap/bootstrap.py" ]
+    depends_on:
+      - zbx70_web
+      - zbx70_ubi8_agent
+      - zbx70_ubi9_agent
+      - zbx70_ubi9_agent_active
+      - zbx70_ubi10_agent
+      - zbx70_fedora43_agent
+      - zbx70_fedora44_agent
+      - zbx70_fedora44_agent_active
+      - zbx70_rocky9_agent
+      - zbx70_rocky10_agent
+      - zbx70_alma9_agent
+      - zbx70_alma10_agent
+      - zbx70_centos9_agent
+      - zbx70_centos10_agent
+    networks:
+      - zbx70_network
+    restart: "no"
+
+  zbx70_ubi8_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.ubi
+      args:
+        UBI_VERSION: '8'
+        UBI_TAG: '8.8'
+    container_name: zbx70_ubi8_agent
+    hostname: zbx70-ubi8-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_ubi9_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.ubi
+      args:
+        UBI_VERSION: '9'
+        UBI_TAG: '9.4'
+    container_name: zbx70_ubi9_agent
+    hostname: zbx70-ubi9-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_ubi9_agent_active:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.ubi
+      args:
+        UBI_VERSION: '9'
+        UBI_TAG: '9.4'
+        AGENT_CONFIG: .dev/zabbix_agent2_active.conf
+    container_name: zbx70_ubi9_agent_active
+    hostname: zbx70-ubi9-agent-active
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_ubi10_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.ubi
+      args:
+        UBI_VERSION: '10'
+        UBI_TAG: '10.0'
+    container_name: zbx70_ubi10_agent
+    hostname: zbx70-ubi10-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_fedora43_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.dnf
+      args:
+        BASE_IMAGE: fedora:43
+        ZABBIX_RHEL_VERSION: '10'
+    container_name: zbx70_fedora43_agent
+    hostname: zbx70-fedora43-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_fedora44_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.dnf
+      args:
+        BASE_IMAGE: fedora:44
+        ZABBIX_RHEL_VERSION: '10'
+    container_name: zbx70_fedora44_agent
+    hostname: zbx70-fedora44-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_fedora44_agent_active:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.dnf
+      args:
+        BASE_IMAGE: fedora:44
+        ZABBIX_RHEL_VERSION: '10'
+        AGENT_CONFIG: .dev/zabbix_agent2_active.conf
+    container_name: zbx70_fedora44_agent_active
+    hostname: zbx70-fedora44-agent-active
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_rocky9_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.dnf
+      args:
+        BASE_IMAGE: rockylinux/rockylinux:9
+        ZABBIX_RHEL_VERSION: '9'
+    container_name: zbx70_rocky9_agent
+    hostname: zbx70-rocky9-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_rocky10_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.dnf
+      args:
+        BASE_IMAGE: rockylinux/rockylinux:10
+        ZABBIX_RHEL_VERSION: '10'
+    container_name: zbx70_rocky10_agent
+    hostname: zbx70-rocky10-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_alma9_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.dnf
+      args:
+        BASE_IMAGE: almalinux:9
+        ZABBIX_RHEL_VERSION: '9'
+    container_name: zbx70_alma9_agent
+    hostname: zbx70-alma9-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_alma10_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.dnf
+      args:
+        BASE_IMAGE: almalinux:10
+        ZABBIX_RHEL_VERSION: '10'
+    container_name: zbx70_alma10_agent
+    hostname: zbx70-alma10-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_centos9_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.dnf
+      args:
+        BASE_IMAGE: quay.io/centos/centos:stream9
+        ZABBIX_RHEL_VERSION: '9'
+    container_name: zbx70_centos9_agent
+    hostname: zbx70-centos9-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+  zbx70_centos10_agent:
+    build:
+      context: ..
+      dockerfile: .dev/Dockerfile.dnf
+      args:
+        BASE_IMAGE: quay.io/centos/centos:stream10
+        ZABBIX_RHEL_VERSION: '10'
+    container_name: zbx70_centos10_agent
+    hostname: zbx70-centos10-agent
+    depends_on:
+      - zbx70_server
+    networks:
+      - zbx70_network
+    restart: unless-stopped
+
+networks:
+  zbx70_network:
+    driver: bridge
+
+volumes:
+  zbx70_data:

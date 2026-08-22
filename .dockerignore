@@ -1,0 +1,15 @@
+**
+
+!go.mod
+!go.sum
+!install.sh
+!dnf.conf
+
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+
+!.dev/
+!.dev/zabbix_agent2.conf
+!.dev/zabbix_agent2_active.conf
