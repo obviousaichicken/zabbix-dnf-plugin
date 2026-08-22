@@ -1,3 +1,9 @@
+[![Checks](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/checks.yaml/badge.svg)](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/checks.yaml)
+[![Dependabot Updates](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/dependabot/dependabot-updates)
+[![DNF Integration](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/dnf-integration.yaml/badge.svg)](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/dnf-integration.yaml)
+[![Release](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/release.yaml/badge.svg)](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/release.yaml)
+[![Release Smoke](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/release-smoke.yaml/badge.svg)](https://github.com/obviousaichicken/zabbix-dnf-plugin/actions/workflows/release-smoke.yaml)
+
 # Zabbix DNF Plugin
 
 A loadable `zabbix-agent2` plugin that collects:
