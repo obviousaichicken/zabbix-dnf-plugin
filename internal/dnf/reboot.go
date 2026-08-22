@@ -39,13 +39,13 @@ var rebootSensitivePackages = map[string]struct{}{
 	"udev":           {},
 }
 
-// RebootCommands contains resolved paths used to determine whether a reboot is pending.
+// RebootCommands contains paths used for reboot detection.
 type RebootCommands struct {
 	RPM   string
 	Uname string
 }
 
-// LookupRebootCommands resolves the commands required for reboot detection.
+// LookupRebootCommands resolves paths for reboot detection.
 func LookupRebootCommands(
 	lookup func(string) (string, error),
 ) (RebootCommands, error) {
@@ -65,14 +65,14 @@ func LookupRebootCommands(
 	}, nil
 }
 
-// RebootChecker combines RPM install-time and kernel-version checks.
+// RebootChecker combines package and kernel reboot checks.
 type RebootChecker struct {
 	runner   Runner
 	commands RebootCommands
 	bootTime func() (int64, error)
 }
 
-// NewRebootChecker creates a reboot checker using resolved command paths.
+// NewRebootChecker creates a reboot checker.
 func NewRebootChecker(
 	runner Runner,
 	commands RebootCommands,
@@ -94,12 +94,12 @@ func NewRebootChecker(
 	}, nil
 }
 
-// RebootPending reports whether installed package state recommends a reboot.
+// RebootPending reports whether a reboot is pending.
 func (c *Client) RebootPending(ctx context.Context) (bool, error) {
 	return c.rebootChecker.Pending(ctx)
 }
 
-// Pending reports whether installed package state recommends a reboot.
+// Pending reports whether a reboot is pending.
 func (c *RebootChecker) Pending(ctx context.Context) (bool, error) {
 	pending, err := c.rebootSensitivePackagesPending(ctx)
 	if err != nil {

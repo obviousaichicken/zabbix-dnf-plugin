@@ -128,7 +128,6 @@ func runAgent() error {
 	// Forward native Zabbix plugin logging to Agent 2.
 	pluginInstance.Logger = handler
 
-	// Application code uses slog.
 	pluginInstance.logger = slog.New(logging.NewZabbixHandler(pluginInstance))
 	defer pluginInstance.Stop()
 

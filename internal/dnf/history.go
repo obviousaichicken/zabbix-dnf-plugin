@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// LastUpdate returns the most recent completed DNF transaction that upgraded a package.
+// LastUpdate returns the latest completed package-upgrade transaction.
 func (c *Client) LastUpdate(ctx context.Context) (*LastUpdate, error) {
 	dnf5, historyJSON, err := c.historyCapabilities(ctx)
 	if err != nil {

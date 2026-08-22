@@ -16,7 +16,7 @@ const (
 
 var errInvalidRepolistOutput = errors.New("invalid repolist output")
 
-// ParseRepositories parses the DNF repository listing format.
+// ParseRepositories parses DNF repository output.
 func ParseRepositories(data []byte) ([]Repository, error) {
 	repositories := make([]Repository, 0)
 

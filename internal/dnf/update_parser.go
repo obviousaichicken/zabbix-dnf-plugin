@@ -12,7 +12,7 @@ const updateFields = 6
 
 var errInvalidRepoqueryOutput = errors.New("invalid repoquery output")
 
-// ParseUpdates parses the output of a DNF package update query.
+// ParseUpdates parses DNF update-query output.
 func ParseUpdates(data []byte) ([]Update, error) {
 	updates := make([]Update, 0)
 

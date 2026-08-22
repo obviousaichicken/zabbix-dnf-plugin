@@ -17,7 +17,7 @@ const (
 	maxStdoutBytes = 8 << 20
 	maxStderrBytes = 256 << 10
 
-	// Bound waiting for inherited output pipes after command cancellation.
+	// Bound the wait for inherited output pipes after cancellation.
 	commandWaitDelay = 100 * time.Millisecond
 )
 
@@ -26,7 +26,7 @@ var (
 	errCommandOutputLimit  = errors.New("command output limit exceeded")
 )
 
-// Request describes an external command invocation.
+// Request is a command invocation.
 type Request struct {
 	Name string
 	Args []string
@@ -38,17 +38,17 @@ type Request struct {
 	Env map[string]string
 }
 
-// Result contains the output and exit status of a command.
+// Result contains command output and exit status.
 type Result struct {
 	Stdout   []byte
 	Stderr   []byte
 	ExitCode int
 }
 
-// Runner executes external commands.
+// Runner executes commands.
 type Runner struct{}
 
-// Run executes the requested command and captures its standard output and error.
+// Run executes a command and captures its output.
 func (Runner) Run(ctx context.Context, req Request) (Result, error) {
 	if req.Name == "" {
 		return Result{Stdout: nil, Stderr: nil, ExitCode: -1}, errCommandNameRequired

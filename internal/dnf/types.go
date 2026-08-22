@@ -8,7 +8,7 @@ import (
 	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/command"
 )
 
-// Runner executes a DNF command.
+// Runner executes DNF commands.
 type Runner interface {
 	Run(
 		ctx context.Context,
@@ -16,13 +16,13 @@ type Runner interface {
 	) (command.Result, error)
 }
 
-// Repository is an enabled package repository.
+// Repository contains an enabled repository's ID and name.
 type Repository struct {
 	ID   string
 	Name string
 }
 
-// Update is an available package update.
+// Update contains package update metadata.
 type Update struct {
 	Name         string
 	Epoch        string
@@ -33,7 +33,7 @@ type Update struct {
 	Type         UpdateType
 }
 
-// UpdateType identifies the advisory category associated with an update.
+// UpdateType identifies an advisory category.
 type UpdateType uint8
 
 const (
@@ -55,7 +55,7 @@ const (
 	LastUpdateResultNotRecorded = "not_recorded"
 )
 
-// CommandError describes a failed DNF command.
+// CommandError represents a failed DNF command.
 type CommandError struct {
 	Command    string
 	ExitStatus int

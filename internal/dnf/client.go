@@ -12,14 +12,14 @@ import (
 
 var errRunnerRequired = errors.New("runner is required")
 
-// Client runs DNF commands and parses their output.
+// Client runs DNF commands and parses output.
 type Client struct {
 	runner        Runner
 	path          string
 	rebootChecker *RebootChecker
 }
 
-// New creates a DNF client using the supplied command runner.
+// New creates a DNF client and resolves its command paths.
 func New(runnerInstance Runner) (*Client, error) {
 	if runnerInstance == nil {
 		return nil, errRunnerRequired
@@ -38,7 +38,7 @@ func New(runnerInstance Runner) (*Client, error) {
 	return NewAtPaths(runnerInstance, path, rebootCommands)
 }
 
-// NewAtPaths creates a DNF client using already-resolved executable paths.
+// NewAtPaths creates a DNF client from resolved command paths.
 func NewAtPaths(
 	runnerInstance Runner,
 	path string,

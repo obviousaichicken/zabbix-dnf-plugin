@@ -15,7 +15,7 @@ var (
 	errUnknownRepository   = errors.New("unknown repository reference")
 )
 
-// Payload is the complete plugin response.
+// Payload is the plugin response.
 type Payload struct {
 	Collection     Collection     `json:"collection"`
 	Classification Classification `json:"classification"`
@@ -24,19 +24,19 @@ type Payload struct {
 	Updates        []Update       `json:"updates"`
 }
 
-// Collection describes the outcome and duration of a successful collection.
+// Collection records collection status and duration.
 type Collection struct {
 	Complete   bool  `json:"complete"`
 	DurationMS int64 `json:"duration_ms"` //nolint:tagliatelle // JSON schema uses snake_case.
 }
 
-// Classification describes the validity of advisory category counts.
+// Classification records advisory category completeness.
 type Classification struct {
 	Complete         bool     `json:"complete"`
 	FailedCategories []string `json:"failed_categories"` //nolint:tagliatelle // JSON schema uses snake_case.
 }
 
-// Summary contains counts for the collected entities.
+// Summary contains collection counts.
 type Summary struct {
 	Repositories   int              `json:"repositories"`
 	Updates        int              `json:"updates"`
@@ -46,7 +46,7 @@ type Summary struct {
 	LastUpdate     LastUpdate       `json:"last_update"`
 }
 
-// UpdateTypeCounts contains package counts by advisory category.
+// UpdateTypeCounts contains advisory category counts.
 type UpdateTypeCounts struct {
 	Security    int `json:"security"`
 	Bugfix      int `json:"bugfix"`
@@ -60,7 +60,7 @@ type LastUpdate struct {
 	Result    string     `json:"result"`
 }
 
-// NewLastUpdate converts a DNF result to its payload representation.
+// NewLastUpdate converts a DNF last update to payload form.
 func NewLastUpdate(update *dnf.LastUpdate) LastUpdate {
 	if update == nil {
 		return LastUpdate{Result: dnf.LastUpdateResultNotRecorded}
@@ -72,14 +72,14 @@ func NewLastUpdate(update *dnf.LastUpdate) LastUpdate {
 	}
 }
 
-// Repository is a repository and its number of available updates.
+// Repository contains a repository and its update count.
 type Repository struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	UpdateCount int    `json:"update_count"` //nolint:tagliatelle // JSON schema uses snake_case.
 }
 
-// Update is an available package update.
+// Update contains package update details.
 type Update struct {
 	RepositoryID string `json:"repository_id"` //nolint:tagliatelle // JSON schema uses snake_case.
 	Name         string `json:"name"`

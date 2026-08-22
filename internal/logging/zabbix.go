@@ -23,13 +23,13 @@ type handlerOp struct {
 	group string
 }
 
-// ZabbixHandler writes structured slog records through a Zabbix logger.
+// ZabbixHandler adapts slog records to a Zabbix logger.
 type ZabbixHandler struct {
 	logger zabbixLogger
 	ops    []handlerOp
 }
 
-// NewZabbixHandler creates a slog handler backed by a Zabbix logger.
+// NewZabbixHandler returns a Zabbix-backed slog handler.
 func NewZabbixHandler(logger zabbixLogger) *ZabbixHandler {
 	return &ZabbixHandler{
 		logger: logger,
@@ -37,12 +37,12 @@ func NewZabbixHandler(logger zabbixLogger) *ZabbixHandler {
 	}
 }
 
-// Enabled reports whether the handler accepts the requested log level.
+// Enabled reports whether records are handled.
 func (h *ZabbixHandler) Enabled(_ context.Context, _ slog.Level) bool {
 	return true
 }
 
-// Handle formats and forwards a slog record to the Zabbix logger.
+// Handle formats and forwards a slog record to Zabbix logging.
 func (h *ZabbixHandler) Handle(ctx context.Context, record slog.Record) error {
 	var buf bytes.Buffer
 
@@ -86,7 +86,7 @@ func (h *ZabbixHandler) Handle(ctx context.Context, record slog.Record) error {
 	return nil
 }
 
-// WithAttrs returns a handler that includes the supplied attributes.
+// WithAttrs adds attributes to the handler.
 func (h *ZabbixHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return h
@@ -102,7 +102,7 @@ func (h *ZabbixHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &clone
 }
 
-// WithGroup returns a handler that nests subsequent attributes in a group.
+// WithGroup nests subsequent attributes.
 func (h *ZabbixHandler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
