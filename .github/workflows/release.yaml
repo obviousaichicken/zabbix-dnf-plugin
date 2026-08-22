@@ -63,3 +63,8 @@ jobs:
             --generate-notes \
             --title "$GITHUB_REF_NAME" \
             --verify-tag
+
+  smoke:
+    name: Test published release
+    needs: release
+    uses: ./.github/workflows/release-smoke.yaml

@@ -1,0 +1,76 @@
+name: Release Smoke
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: UBI 9 / DNF4
+            image: registry.access.redhat.com/ubi9/ubi:latest
+            zabbix-release: https://repo.zabbix.com/zabbix/7.0/rhel/9/x86_64/zabbix-release-latest.el9.noarch.rpm
+          - name: Fedora 44 / DNF5
+            image: fedora:44
+            zabbix-release: https://repo.zabbix.com/zabbix/7.0/rhel/10/x86_64/zabbix-release-latest.el10.noarch.rpm
+
+    steps:
+      - name: Test published installer
+        env:
+          IMAGE: ${{ matrix.image }}
+          ZABBIX_RELEASE_RPM: ${{ matrix.zabbix-release }}
+        run: |
+          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download"
+
+          docker pull "$IMAGE"
+          docker run --rm \
+            --env RELEASE_URL="$release_url" \
+            --env ZABBIX_RELEASE_RPM \
+            "$IMAGE" \
+            /bin/bash -euo pipefail -c '
+              dnf -q install -y --allowerasing \
+                ca-certificates curl util-linux >/dev/null
+              curl -fsSL \
+                -o /tmp/zabbix-release.rpm \
+                "$ZABBIX_RELEASE_RPM"
+              rpm -Uvh /tmp/zabbix-release.rpm >/dev/null
+              dnf -q install -y \
+                --setopt=install_weak_deps=False \
+                zabbix-agent2 >/dev/null
+              dnf -q makecache >/dev/null
+
+              curl -fL --retry 3 --retry-all-errors \
+                -o /tmp/install.sh \
+                "${RELEASE_URL}/install.sh"
+              SKIP_SERVICE_RESTART=1 sh /tmp/install.sh
+
+              zabbix_account="$(getent passwd zabbix)"
+              zabbix_home="${zabbix_account%:*}"
+              zabbix_home="${zabbix_home##*:}"
+              test -d "$zabbix_home"
+              test "$(stat -c "%U:%G" "$zabbix_home")" = zabbix:zabbix
+
+              zabbix_agent2 -T -c /etc/zabbix/zabbix_agent2.conf
+              output="$(runuser -u zabbix -- \
+                zabbix_agent2 \
+                -c /etc/zabbix/zabbix_agent2.conf \
+                -t dnf.get)"
+              case "$output" in
+                *"[s|"*"\"collection\":{\"complete\":true"*) ;;
+                *)
+                  printf "dnf.get did not return a complete collection: %s\n" \
+                    "$output" >&2
+                  exit 1
+                  ;;
+              esac
+              printf "%s\n" "$output"
+            '
