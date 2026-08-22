@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"strings"
 
 	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/command"
 )
@@ -70,23 +69,11 @@ func NewAtPaths(
 func (c *Client) run(ctx context.Context, args ...string) (command.Result, error) {
 	args = append([]string{"--assumeno"}, args...)
 
-	result, err := c.runner.Run(ctx, command.Request{
-		Name:              c.path,
-		Args:              args,
-		AcceptedExitCodes: nil,
-		Env: map[string]string{
-			"LC_ALL": "C",
-			"LANG":   "C",
-		},
-	})
-	if err != nil {
-		return result, &CommandError{
-			Command:    c.path + " " + strings.Join(args, " "),
-			ExitStatus: result.ExitCode,
-			Stderr:     strings.TrimSpace(string(result.Stderr)),
-			Err:        err,
-		}
-	}
-
-	return result, nil
+	return runCommand(
+		ctx,
+		c.runner,
+		c.path,
+		args,
+		nil,
+	)
 }
