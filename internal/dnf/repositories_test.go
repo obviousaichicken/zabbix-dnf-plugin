@@ -129,6 +129,18 @@ func TestParseRepositoriesRejectsUnexpectedOutput(t *testing.T) {
 			name:  "invalid header",
 			input: "repo id repository description\n",
 		},
+		{
+			name:  "invalid status header",
+			input: "repo id repo name count\n",
+		},
+		{
+			name:  "row missing name",
+			input: "repo id repo name\nbaseos\n",
+		},
+		{
+			name:  "status row missing status",
+			input: "repo id repo name status\nbaseos BaseOS\n",
+		},
 	}
 
 	for _, testCase := range tests {

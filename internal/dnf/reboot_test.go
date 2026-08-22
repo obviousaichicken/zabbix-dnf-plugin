@@ -4,42 +4,21 @@ package dnf
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
-
-	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/command"
 )
-
-type rebootResponse struct {
-	result command.Result
-	err    error
-}
-
-type rebootRunner struct {
-	responses []rebootResponse
-	requests  []command.Request
-}
-
-func (r *rebootRunner) Run(
-	_ context.Context,
-	request command.Request,
-) (command.Result, error) {
-	r.requests = append(r.requests, request)
-	response := r.responses[len(r.requests)-1]
-
-	return response.result, response.err
-}
 
 func TestRebootCheckerFallsBackToKernelAfterSensitivePackages(t *testing.T) {
 	t.Parallel()
 
-	runner := &rebootRunner{
-		responses: []rebootResponse{
-			{result: command.Result{Stdout: []byte("bash|99\n")}},
-			{result: command.Result{Stdout: []byte("5.14.0-570.28.1.el9_6.x86_64\n")}},
-			{result: command.Result{Stdout: []byte(
+	runner := &fakeRunner{
+		responses: []fakeResponse{
+			{stdout: []byte("bash|99\n")},
+			{stdout: []byte("5.14.0-570.28.1.el9_6.x86_64\n")},
+			{stdout: []byte(
 				"kernel-core|5.14.0-570.28.1.el9_6.x86_64\n" +
 					"kernel-core|5.14.0-570.30.1.el9_6.x86_64\n",
-			)}},
+			)},
 		},
 	}
 	checker, err := NewRebootChecker(runner, RebootCommands{
@@ -71,9 +50,9 @@ func TestRebootCheckerFallsBackToKernelAfterSensitivePackages(t *testing.T) {
 func TestRebootCheckerDetectsRebootSensitivePackage(t *testing.T) {
 	t.Parallel()
 
-	runner := &rebootRunner{
-		responses: []rebootResponse{{
-			result: command.Result{Stdout: []byte("glibc|101\n")},
+	runner := &fakeRunner{
+		responses: []fakeResponse{{
+			stdout: []byte("glibc|101\n"),
 		}},
 	}
 	checker, err := NewRebootChecker(runner, RebootCommands{
@@ -96,6 +75,27 @@ func TestRebootCheckerDetectsRebootSensitivePackage(t *testing.T) {
 	}
 	if len(runner.requests) != 1 {
 		t.Fatalf("Pending() ran %d commands, want 1", len(runner.requests))
+	}
+}
+
+func TestClientRebootPending(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{
+		responses: []fakeResponse{{stdout: []byte("glibc|101\n")}},
+	}
+	checker := newTestRebootChecker(t, runner)
+	checker.bootTime = func() (int64, error) {
+		return 100, nil
+	}
+	client := &Client{rebootChecker: checker}
+
+	pending, err := client.RebootPending(context.Background())
+	if err != nil {
+		t.Fatalf("RebootPending() error = %v", err)
+	}
+	if !pending {
+		t.Fatal("RebootPending() = false, want true")
 	}
 }
 
@@ -179,8 +179,8 @@ func TestNewRebootCheckerValidatesConfiguration(t *testing.T) {
 		wantErr  error
 	}{
 		{name: "runner required", commands: validCommands, wantErr: errRebootRunnerRequired},
-		{name: "rpm path required", runner: &rebootRunner{}, commands: RebootCommands{Uname: validCommands.Uname}, wantErr: errRPMPathRequired},
-		{name: "uname path required", runner: &rebootRunner{}, commands: RebootCommands{RPM: validCommands.RPM}, wantErr: errUnamePathRequired},
+		{name: "rpm path required", runner: &fakeRunner{}, commands: RebootCommands{Uname: validCommands.Uname}, wantErr: errRPMPathRequired},
+		{name: "uname path required", runner: &fakeRunner{}, commands: RebootCommands{RPM: validCommands.RPM}, wantErr: errUnamePathRequired},
 	}
 
 	for _, test := range tests {
@@ -199,13 +199,11 @@ func TestRebootCheckerReturnsPackageQueryError(t *testing.T) {
 	t.Parallel()
 
 	queryErr := errors.New("rpm unavailable")
-	runner := &rebootRunner{
-		responses: []rebootResponse{{
-			result: command.Result{
-				ExitCode: 1,
-				Stderr:   []byte("permission denied"),
-			},
-			err: queryErr,
+	runner := &fakeRunner{
+		responses: []fakeResponse{{
+			exitCode: 1,
+			stderr:   []byte("permission denied"),
+			err:      queryErr,
 		}},
 	}
 	checker := newTestRebootChecker(t, runner)
@@ -224,6 +222,76 @@ func TestRebootCheckerReturnsPackageQueryError(t *testing.T) {
 	}
 	if commandErr.ExitStatus != 1 {
 		t.Fatalf("Pending() CommandError = %#v", commandErr)
+	}
+}
+
+func TestRebootCheckerReturnsBootTimeError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("boot time unavailable")
+	checker := newTestRebootChecker(t, &fakeRunner{})
+	checker.bootTime = func() (int64, error) {
+		return 0, wantErr
+	}
+
+	_, err := checker.Pending(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Pending() error = %v, want %v", err, wantErr)
+	}
+	if !strings.Contains(err.Error(), "read boot time") {
+		t.Fatalf("Pending() error = %v, want boot-time context", err)
+	}
+}
+
+func TestKernelPendingReturnsErrors(t *testing.T) {
+	t.Parallel()
+
+	commandErr := errors.New("kernel command failed")
+	tests := []struct {
+		name      string
+		responses []fakeResponse
+		wantCause error
+		wantText  string
+	}{
+		{
+			name:      "running kernel query failure",
+			responses: []fakeResponse{{err: commandErr}},
+			wantCause: commandErr,
+			wantText:  "read running kernel",
+		},
+		{
+			name: "installed kernel query failure",
+			responses: []fakeResponse{
+				{stdout: []byte("5.14.0-570.el9.x86_64\n")},
+				{err: commandErr},
+			},
+			wantCause: commandErr,
+			wantText:  "query installed kernels",
+		},
+		{
+			name: "installed kernel parse failure",
+			responses: []fakeResponse{
+				{stdout: []byte("5.14.0-570.el9.x86_64\n")},
+				{stdout: []byte(strings.Repeat("x", 70*1024))},
+			},
+			wantText: "compare installed kernels",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			checker := newTestRebootChecker(t, &fakeRunner{responses: test.responses})
+
+			_, err := checker.kernelPending(context.Background())
+			if err == nil || !strings.Contains(err.Error(), test.wantText) {
+				t.Fatalf("kernelPending() error = %v, want text %q", err, test.wantText)
+			}
+			if test.wantCause != nil && !errors.Is(err, test.wantCause) {
+				t.Fatalf("kernelPending() error = %v, want cause %v", err, test.wantCause)
+			}
+		})
 	}
 }
 
@@ -248,6 +316,30 @@ func TestParseBootTime(t *testing.T) {
 	}
 }
 
+func TestParseBootTimeRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		data     string
+		wantText string
+	}{
+		{name: "missing btime", data: "cpu  1 2 3\n", wantText: "btime not found"},
+		{name: "invalid btime", data: "btime not-a-time\n", wantText: "parse btime"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseBootTime([]byte(test.data))
+			if err == nil || !strings.Contains(err.Error(), test.wantText) {
+				t.Fatalf("parseBootTime() error = %v, want text %q", err, test.wantText)
+			}
+		})
+	}
+}
+
 func TestRebootSensitivePackageInstalled(t *testing.T) {
 	t.Parallel()
 
@@ -256,6 +348,7 @@ func TestRebootSensitivePackageInstalled(t *testing.T) {
 		data string
 		want bool
 	}{
+		{name: "malformed row ignored", data: "malformed\n", want: false},
 		{name: "unrelated package", data: "bash|101\n", want: false},
 		{name: "package installed before boot", data: "glibc|100\n", want: false},
 		{name: "openssl libraries", data: "openssl-libs|101\n", want: true},
@@ -315,6 +408,44 @@ func TestIsKernelPackage(t *testing.T) {
 	}
 }
 
+func TestCompareKernelRelease(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		left  string
+		right string
+		want  int
+	}{
+		{name: "equal", left: "5.14.0-570.el9", right: "5.14.0-570.el9", want: 0},
+		{name: "newer numeric segment", left: "5.14.0-571.el9", right: "5.14.0-570.el9", want: 1},
+		{name: "older numeric segment", left: "5.14.0-569.el9", right: "5.14.0-570.el9", want: -1},
+		{name: "numeric after alphabetic", left: "5.14.0-1", right: "5.14.0-a", want: 1},
+		{name: "alphabetic before numeric", left: "5.14.0-a", right: "5.14.0-1", want: -1},
+		{name: "leading zeroes ignored", left: "5.14.0-00570.el9", right: "5.14.0-570.el9", want: 0},
+		{name: "longer numeric segment is newer", left: "5.14.0-1000.el9", right: "5.14.0-999.el9", want: 1},
+		{name: "left segment missing", left: "5.14", right: "5.14.1", want: -1},
+		{name: "right segment missing", left: "5.14.1", right: "5.14", want: 1},
+		{name: "alphabetic segment ordering", left: "5.14.0-debug", right: "5.14.0-alpha", want: 1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := compareKernelRelease(test.left, test.right); got != test.want {
+				t.Fatalf(
+					"compareKernelRelease(%q, %q) = %d, want %d",
+					test.left,
+					test.right,
+					got,
+					test.want,
+				)
+			}
+		})
+	}
+}
+
 func TestRebootCheckerFallsBackToInstalledKernel(t *testing.T) {
 	t.Parallel()
 
@@ -361,6 +492,13 @@ func TestRebootCheckerFallsBackToInstalledKernel(t *testing.T) {
 			want: false,
 		},
 		{
+			name:    "newer different kernel flavor is ignored",
+			running: "5.14.0-570.28.1.el9_6.x86_64\n",
+			installed: "kernel-core|5.14.0-570.28.1.el9_6.x86_64\n" +
+				"kernel-rt-core|5.14.0-570.30.1.rt.el9_6.x86_64\n",
+			want: false,
+		},
+		{
 			name:         "older kernel reinstalled later",
 			running:      "5.14.0-570.30.1.el9_6.x86_64\n",
 			packageQuery: "kernel-core|101\n",
@@ -378,11 +516,11 @@ func TestRebootCheckerFallsBackToInstalledKernel(t *testing.T) {
 			if packageQuery == "" {
 				packageQuery = "bash|99\n"
 			}
-			runner := &rebootRunner{
-				responses: []rebootResponse{
-					{result: command.Result{Stdout: []byte(packageQuery), ExitCode: 0}},
-					{result: command.Result{Stdout: []byte(test.running), ExitCode: 0}},
-					{result: command.Result{Stdout: []byte(test.installed), ExitCode: 0}},
+			runner := &fakeRunner{
+				responses: []fakeResponse{
+					{stdout: []byte(packageQuery)},
+					{stdout: []byte(test.running)},
+					{stdout: []byte(test.installed)},
 				},
 			}
 			checker := newTestRebootChecker(t, runner)
