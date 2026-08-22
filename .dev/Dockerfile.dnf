@@ -16,10 +16,11 @@ FROM ${BASE_IMAGE}
 
 ARG ZABBIX_RHEL_VERSION=10
 ARG AGENT_CONFIG=.dev/zabbix_agent2.conf
+ARG ZABBIX_RELEASE_URL=https://repo.zabbix.com/zabbix/7.0/rhel/${ZABBIX_RHEL_VERSION}/x86_64/zabbix-release-latest.el${ZABBIX_RHEL_VERSION}.noarch.rpm
 
 # Use the matching Zabbix EL package when no distribution-specific package exists.
 RUN dnf install -y \
-        "https://repo.zabbix.com/zabbix/7.0/rhel/${ZABBIX_RHEL_VERSION}/x86_64/zabbix-release-latest.el${ZABBIX_RHEL_VERSION}.noarch.rpm" && \
+        "$ZABBIX_RELEASE_URL" && \
     dnf install -y --setopt=install_weak_deps=False util-linux zabbix-agent2 && \
     dnf clean all && \
     dnf -q makecache

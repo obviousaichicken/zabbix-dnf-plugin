@@ -1,4 +1,4 @@
-name: DNF Integration
+name: DNF Integration Tests
 
 on:
   workflow_call:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   dnf:
-    name: ${{ matrix.name }}
+    name: Distribution compatibility / ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -28,6 +28,10 @@ jobs:
             image: registry.access.redhat.com/ubi9/ubi:latest
             dockerfile: .dev/Dockerfile.ubi
             build-args: UBI_VERSION=9 UBI_TAG=latest
+          - name: UBI 9 / DNF / Zabbix 7.4
+            image: registry.access.redhat.com/ubi9/ubi:latest
+            dockerfile: .dev/Dockerfile.ubi
+            build-args: UBI_VERSION=9 UBI_TAG=latest ZABBIX_RELEASE_URL=https://repo.zabbix.com/zabbix/7.4/release/rhel/9/noarch/zabbix-release-latest.el9.noarch.rpm
           - name: UBI 10 / DNF
             image: registry.access.redhat.com/ubi10/ubi:latest
             dockerfile: .dev/Dockerfile.ubi
@@ -40,6 +44,10 @@ jobs:
             image: fedora:44
             dockerfile: .dev/Dockerfile.dnf
             build-args: BASE_IMAGE=fedora:44 ZABBIX_RHEL_VERSION=10
+          - name: Fedora 44 / DNF5 / Zabbix 7.4
+            image: fedora:44
+            dockerfile: .dev/Dockerfile.dnf
+            build-args: BASE_IMAGE=fedora:44 ZABBIX_RHEL_VERSION=10 ZABBIX_RELEASE_URL=https://repo.zabbix.com/zabbix/7.4/release/rhel/10/noarch/zabbix-release-latest.el10.noarch.rpm
           - name: Rocky Linux 9 / DNF
             image: rockylinux/rockylinux:9
             dockerfile: .dev/Dockerfile.dnf
@@ -127,22 +135,74 @@ jobs:
           printf '%s\n' "$output"
 
   agent2:
-    name: Zabbix Agent 2 ${{ matrix.version }} / ${{ matrix.history }} history
+    name: Agent 2 protocol compatibility / ${{ matrix.version }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix:
-        include:
-          - version: 7.0.5
-            image: zabbix/zabbix-agent2:alpine-7.0.5
-            history: populated
-          - version: latest 7.0
-            image: zabbix/zabbix-agent2:alpine-7.0-latest
-            history: empty
-          - version: latest 7.0
-            image: zabbix/zabbix-agent2:alpine-7.0-latest
-            history: populated
+        version:
+          - 7.0.0
+          - 7.0.1
+          - 7.0.2
+          - 7.0.3
+          - 7.0.4
+          - 7.0.5
+          - 7.0.6
+          - 7.0.7
+          - 7.0.8
+          - 7.0.9
+          - 7.0.10
+          - 7.0.11
+          - 7.0.12
+          - 7.0.13
+          - 7.0.14
+          - 7.0.15
+          - 7.0.16
+          - 7.0.17
+          - 7.0.18
+          - 7.0.19
+          - 7.0.20
+          - 7.0.21
+          - 7.0.22
+          - 7.0.23
+          - 7.0.24
+          - 7.0.25
+          - 7.0.26
+          - 7.0.27
+          - 7.0.28
+          - 7.0.29
+          - 7.2.0
+          - 7.2.1
+          - 7.2.2
+          - 7.2.3
+          - 7.2.4
+          - 7.2.5
+          - 7.2.6
+          - 7.2.7
+          - 7.2.8
+          - 7.2.9
+          - 7.2.10
+          - 7.2.11
+          - 7.2.12
+          - 7.2.13
+          - 7.2.14
+          - 7.2.15
+          - 7.4.0
+          - 7.4.1
+          - 7.4.2
+          - 7.4.3
+          - 7.4.4
+          - 7.4.5
+          - 7.4.6
+          - 7.4.7
+          - 7.4.8
+          - 7.4.9
+          - 7.4.10
+          - 7.4.11
+          - 7.4.12
+          - 7.4.13
 
     steps:
       - uses: actions/checkout@v7
@@ -157,8 +217,8 @@ jobs:
 
       - name: Test Agent 2 plugin socket protocol
         env:
-          AGENT_IMAGE: ${{ matrix.image }}
-          FAKE_DNF_HISTORY: ${{ matrix.history }}
+          AGENT_IMAGE: zabbix/zabbix-agent2:alpine-${{ matrix.version }}
+          FAKE_DNF_HISTORY: populated
         run: |
           chmod +x .github/ci/zabbix-agent2/fakebin/*
           docker pull "$AGENT_IMAGE"

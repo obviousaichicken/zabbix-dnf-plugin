@@ -17,12 +17,13 @@ FROM registry.access.redhat.com/ubi${UBI_VERSION}/ubi:${UBI_TAG}
 
 ARG UBI_VERSION
 ARG AGENT_CONFIG=.dev/zabbix_agent2.conf
+ARG ZABBIX_RELEASE_URL=https://repo.zabbix.com/zabbix/7.0/rhel/${UBI_VERSION}/x86_64/zabbix-release-latest.el${UBI_VERSION}.noarch.rpm
 
 RUN set -eux; \
     dnf install -y --allowerasing ca-certificates curl util-linux; \
     curl -fsSL \
         -o /tmp/zabbix-release.rpm \
-        "https://repo.zabbix.com/zabbix/7.0/rhel/${UBI_VERSION}/x86_64/zabbix-release-latest.el${UBI_VERSION}.noarch.rpm"; \
+        "$ZABBIX_RELEASE_URL"; \
     rpm -Uvh /tmp/zabbix-release.rpm; \
     dnf install -y zabbix-agent2; \
     rm -f /tmp/zabbix-release.rpm; \
