@@ -11,13 +11,13 @@ A loadable `zabbix-agent2` plugin that collects:
 
 The plugin returns the collected data as a single JSON payload for use with dependent items and discovery rules.
 
-![](https://i.imgur.com/aZmet8Y.png)
+<img width="1905" height="1016" alt="Screenshot From 2026-08-21 20-38-47" src="https://github.com/user-attachments/assets/ea31ef4a-861f-4865-8748-1dcf3f474762" />
 
-![](https://i.imgur.com/a5r5mLX.png)
+<img width="2106" height="634" alt="Screenshot From 2026-08-21 20-39-21" src="https://github.com/user-attachments/assets/cf966977-d3b7-49e6-9b3b-d984cd8b0a97" />
 
-![](https://i.imgur.com/tjaKnW2.png)
+<img width="2202" height="520" alt="Screenshot From 2026-08-21 20-39-53" src="https://github.com/user-attachments/assets/51f4dcac-2fab-4973-816d-c9e225839fc3" />
 
-![](https://i.imgur.com/xZ5RQUk.png)
+<img width="2199" height="290" alt="Screenshot From 2026-08-21 20-39-37" src="https://github.com/user-attachments/assets/d891dfe2-7b07-482c-8279-ed0770003751" />
 
 ## Install the plugin
 
