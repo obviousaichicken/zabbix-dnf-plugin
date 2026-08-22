@@ -87,7 +87,7 @@ sudo ausearch -m AVC -ts recent
 
 Download the template from the GitHub release.
 
-In Zabbix, go to **Data collection > Templates > Import** and import the downloaded `template-dnf-by-zabbix-agent2.yaml` file. Then link **DNF by Zabbix agent 2** to each host running the plugin.
+In Zabbix, go to **Data collection > Templates > Import** and import the downloaded `template-dnf-by-zabbix-agent2.yaml` file. Then link **DNF by Zabbix agent 2** or **DNF by Zabbix agent 2 active** to each host running the plugin.
 
 The template creates the required monitoring items, repository discovery, and alerts automatically.
 

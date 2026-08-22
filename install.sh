@@ -71,19 +71,37 @@ fi
 
 check_operating_system
 
-for command_name in curl dnf env sha256sum install mktemp rpm runuser zabbix_agent2; do
+for command_name in curl dnf env getent sha256sum install mktemp rpm runuser zabbix_agent2; do
 	command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: ${command_name}"
 done
 
-id zabbix >/dev/null 2>&1 || fail "required user not found: zabbix"
+zabbix_account="$(getent passwd zabbix)" || fail "required user not found: zabbix"
+zabbix_home="${zabbix_account%:*}"
+zabbix_home="${zabbix_home##*:}"
+
+case "$zabbix_home" in
+'' | /)
+	fail "invalid home directory for zabbix user: ${zabbix_home:-empty}"
+	;;
+/*) ;;
+*) fail "zabbix user home is not an absolute path: $zabbix_home" ;;
+esac
+
+if [ ! -e "$zabbix_home" ]; then
+	install -d -m 0755 -o zabbix -g zabbix "$zabbix_home"
+elif [ ! -d "$zabbix_home" ]; then
+	fail "zabbix user home is not a directory: $zabbix_home"
+fi
+
+if command -v restorecon >/dev/null 2>&1; then
+	restorecon -R "$zabbix_home"
+fi
 
 printf '%s\n' 'Checking Zabbix Agent 2 version...'
 check_agent_version
 
 tmp_dir="$(mktemp -d)"
 install -d -m 0755 "$tmp_dir"
-zabbix_home="${tmp_dir}/zabbix-home"
-install -d -m 0700 -o zabbix "$zabbix_home"
 
 cleanup() {
 	rm -rf "$tmp_dir"

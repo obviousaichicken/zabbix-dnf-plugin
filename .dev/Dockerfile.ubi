@@ -28,7 +28,6 @@ RUN set -eux; \
     rm -f /tmp/zabbix-release.rpm; \
     dnf clean all
 
-RUN install -d -m 0755 -o zabbix -g zabbix /var/lib/zabbix
 ENV HOME=/var/lib/zabbix
 
 COPY ${AGENT_CONFIG} /etc/zabbix/zabbix_agent2.conf
