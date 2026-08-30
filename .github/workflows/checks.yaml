@@ -34,8 +34,10 @@ jobs:
       - name: Run Go vet
         run: go vet ./...
 
-      - name: Validate installer syntax
-        run: sh -n install.sh
+      - name: Validate installer scripts
+        run: |
+          sh -n install.sh
+          sh -n .dev/installer-test/dnf
 
       - name: Scan for vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

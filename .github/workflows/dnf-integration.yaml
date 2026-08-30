@@ -102,7 +102,7 @@ jobs:
               ./dnf-integration.test -test.v -test.run "^TestDNFSmoke$"
             '
 
-      - name: Build Agent 2 image through installer
+      - name: Build Agent 2 image and test installer GPG bootstrap
         env:
           BUILD_ARGS: ${{ matrix.build-args }}
           DOCKERFILE: ${{ matrix.dockerfile }}

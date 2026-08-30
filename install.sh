@@ -117,9 +117,9 @@ run_as_zabbix() {
 
 printf '%s\n' 'Checking DNF access...'
 dnf_path="$(command -v dnf)"
-run_as_zabbix "$dnf_path" -q repolist >/dev/null ||
+run_as_zabbix "$dnf_path" --assumeyes -q repolist </dev/null >/dev/null ||
 	fail "the zabbix user cannot list DNF repositories"
-run_as_zabbix "$dnf_path" -q repoquery --upgrades >/dev/null ||
+run_as_zabbix "$dnf_path" --assumeyes -q repoquery --upgrades </dev/null >/dev/null ||
 	fail "the zabbix user cannot query DNF updates"
 
 printf '%s\n' 'Downloading release files...'

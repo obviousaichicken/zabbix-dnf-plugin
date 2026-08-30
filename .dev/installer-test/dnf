@@ -1,0 +1,57 @@
+#!/bin/sh
+
+set -eu
+
+assumeyes=0
+assumeno=0
+dnf_command=
+
+for argument do
+	case "$argument" in
+	-y | --assumeyes)
+		assumeyes=1
+		;;
+	--assumeno)
+		assumeno=1
+		;;
+	repolist | repoquery)
+		if [ -z "$dnf_command" ]; then
+			dnf_command="$argument"
+		fi
+		;;
+	esac
+done
+
+# The installer runs these two bootstrap queries as the unprivileged zabbix
+# user. Normal plugin queries use --assumeno and pass straight through.
+if [ "$(id -u)" -ne 0 ]; then
+	case "$dnf_command" in
+	repolist | repoquery)
+		if [ "$assumeyes" -eq 1 ]; then
+			if [ "$assumeno" -eq 1 ]; then
+				printf '%s\n' 'DNF bootstrap cannot use --assumeyes and --assumeno together' >&2
+				exit 86
+			fi
+
+			stdin_path="$(readlink /proc/self/fd/0)" || {
+				printf '%s\n' 'cannot inspect DNF bootstrap stdin' >&2
+				exit 86
+			}
+			if [ "$stdin_path" != /dev/null ]; then
+				printf 'DNF bootstrap stdin is %s, expected /dev/null\n' "$stdin_path" >&2
+				exit 86
+			fi
+
+			if [ -n "${DNF_BOOTSTRAP_CHECK_DIR:-}" ]; then
+				: >"${DNF_BOOTSTRAP_CHECK_DIR}/${dnf_command}"
+			fi
+		elif [ "$assumeno" -ne 1 ]; then
+			printf '%s\n' \
+				'simulated unimported repository key: expected --assumeyes' >&2
+			exit 86
+		fi
+		;;
+	esac
+fi
+
+exec /usr/bin/dnf "$@"

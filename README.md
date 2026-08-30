@@ -37,7 +37,7 @@ Run this command:
 curl -fLO https://github.com/obviousaichicken/zabbix-dnf-plugin/releases/latest/download/install.sh && sudo sh install.sh
 ```
 
-The installer downloads and verifies the plugin, installs the binary and configuration, verifies DNF access as the `zabbix` user, restores SELinux contexts, restarts `zabbix-agent2` and tests the plugin.
+The installer downloads and verifies the plugin, installs the binary and configuration, verifies DNF access as the `zabbix` user, initializes that user's DNF repository-key cache from the keys configured by enabled repositories, restores SELinux contexts, restarts `zabbix-agent2` and tests the plugin.
 
 ### Manual installation
 
