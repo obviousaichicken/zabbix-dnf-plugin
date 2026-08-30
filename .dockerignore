@@ -13,3 +13,5 @@
 !.dev/
 !.dev/zabbix_agent2.conf
 !.dev/zabbix_agent2_active.conf
+!.dev/installer-test/
+!.dev/installer-test/dnf

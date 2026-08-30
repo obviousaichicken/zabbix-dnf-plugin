@@ -17,12 +17,13 @@ FROM registry.access.redhat.com/ubi${UBI_VERSION}/ubi:${UBI_TAG}
 
 ARG UBI_VERSION
 ARG AGENT_CONFIG=.dev/zabbix_agent2.conf
+ARG ZABBIX_RELEASE_URL=https://repo.zabbix.com/zabbix/7.0/rhel/${UBI_VERSION}/x86_64/zabbix-release-latest.el${UBI_VERSION}.noarch.rpm
 
 RUN set -eux; \
     dnf install -y --allowerasing ca-certificates curl util-linux; \
     curl -fsSL \
         -o /tmp/zabbix-release.rpm \
-        "https://repo.zabbix.com/zabbix/7.0/rhel/${UBI_VERSION}/x86_64/zabbix-release-latest.el${UBI_VERSION}.noarch.rpm"; \
+        "$ZABBIX_RELEASE_URL"; \
     rpm -Uvh /tmp/zabbix-release.rpm; \
     dnf install -y zabbix-agent2; \
     rm -f /tmp/zabbix-release.rpm; \
@@ -33,10 +34,25 @@ ENV HOME=/var/lib/zabbix
 COPY ${AGENT_CONFIG} /etc/zabbix/zabbix_agent2.conf
 COPY dnf.conf /tmp/release/dnf.conf
 COPY install.sh /tmp/install.sh
+COPY .dev/installer-test/dnf /tmp/install-test-bin/dnf
 COPY --from=builder /out/ /tmp/release/
 
-RUN RELEASE_URL=file:///tmp/release SKIP_SERVICE_RESTART=1 /tmp/install.sh && \
-    rm -rf /tmp/install.sh /tmp/release
+# Put a validating DNF shim in front of the real binary so every image build
+# exercises the installer's noninteractive repository-key bootstrap.
+RUN chmod 0755 /tmp/install-test-bin/dnf && \
+    install -d -m 0777 /tmp/dnf-bootstrap-check && \
+    PATH="/tmp/install-test-bin:${PATH}" \
+        DNF_BOOTSTRAP_CHECK_DIR=/tmp/dnf-bootstrap-check \
+        RELEASE_URL=file:///tmp/release \
+        SKIP_SERVICE_RESTART=1 \
+        /tmp/install.sh && \
+    test -f /tmp/dnf-bootstrap-check/repolist && \
+    test -f /tmp/dnf-bootstrap-check/repoquery && \
+    rm -rf \
+        /tmp/dnf-bootstrap-check \
+        /tmp/install-test-bin \
+        /tmp/install.sh \
+        /tmp/release
 
 EXPOSE 10050
 

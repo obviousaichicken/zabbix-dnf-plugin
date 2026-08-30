@@ -1,4 +1,4 @@
-name: Release
+name: Build and Publish Release
 
 on:
   push:
@@ -10,15 +10,15 @@ permissions:
 
 jobs:
   checks:
-    name: Run checks
+    name: Pre-release Checks
     uses: ./.github/workflows/checks.yaml
 
   integration:
-    name: Run DNF integration
+    name: DNF Integration Tests
     uses: ./.github/workflows/dnf-integration.yaml
 
   release:
-    name: Build and release
+    name: Build and Publish Release
     needs:
       - checks
       - integration
@@ -65,6 +65,6 @@ jobs:
             --verify-tag
 
   smoke:
-    name: Test published release
+    name: Published Release Installation Tests
     needs: release
     uses: ./.github/workflows/release-smoke.yaml

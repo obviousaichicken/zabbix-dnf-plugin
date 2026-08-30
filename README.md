@@ -27,7 +27,7 @@ The plugin returns the collected data as a single JSON payload for use with depe
 
 ## Install the plugin
 
-The plugin works on `zabbix-agent2` 7.0.5 or newer. Due to Go API changes 7.2 and 7.4 are not supported.
+The plugin is compatible with every currently released `zabbix-agent2` version in the 7.0, 7.2, and 7.4 branches.
 
 ### Automated installation
 
@@ -37,7 +37,7 @@ Run this command:
 curl -fLO https://github.com/obviousaichicken/zabbix-dnf-plugin/releases/latest/download/install.sh && sudo sh install.sh
 ```
 
-The installer downloads and verifies the plugin, installs the binary and configuration, verifies DNF access as the `zabbix` user, restores SELinux contexts, restarts `zabbix-agent2` and tests the plugin.
+The installer downloads and verifies the plugin, installs the binary and configuration, verifies DNF access as the `zabbix` user, initializes that user's DNF repository-key cache from the keys configured by enabled repositories, restores SELinux contexts, restarts `zabbix-agent2` and tests the plugin.
 
 ### Manual installation
 
@@ -161,9 +161,9 @@ All listed distributions are supported on x86_64 and exercised in CI:
 * AlmaLinux 9 and 10.
 * CentOS Stream 9 and 10.
 
-Due to recent changes to `zabbix-agent2` support is limited:
-* `zabbix-agent2` 7.0.5 or newer in the 7.0 branch is supported.
-* `zabbix-agent2` 7.2 and 7.4 branches are not supported.
+The plugin is compatible with every currently released `zabbix-agent2` version in the 7.0, 7.2, and 7.4 branches.
+
+All three branches use the same plugin binary.
 
 Reboot status is determined from reboot-sensitive RPM install times and installed kernel packages compared with the running kernel. The plugin supports DNF4 and DNF5 without depending on an optional DNF reboot-detection plugin.
 

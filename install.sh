@@ -37,9 +37,12 @@ check_agent_version() {
 		esac
 	done
 
-	if [ "$1" -ne 7 ] || [ "$2" -ne 0 ] || [ "$3" -lt 5 ]; then
-		fail "unsupported Zabbix Agent 2 version $agent_version; require 7.0.5 or newer in the 7.0 branch"
-	fi
+	case "$1.$2" in
+	7.0 | 7.2 | 7.4) ;;
+	*)
+		fail "unsupported Zabbix Agent 2 version $agent_version; require 7.0, 7.2, or 7.4"
+		;;
+	esac
 }
 
 check_operating_system() {
@@ -114,9 +117,9 @@ run_as_zabbix() {
 
 printf '%s\n' 'Checking DNF access...'
 dnf_path="$(command -v dnf)"
-run_as_zabbix "$dnf_path" -q repolist >/dev/null ||
+run_as_zabbix "$dnf_path" --assumeyes -q repolist </dev/null >/dev/null ||
 	fail "the zabbix user cannot list DNF repositories"
-run_as_zabbix "$dnf_path" -q repoquery --upgrades >/dev/null ||
+run_as_zabbix "$dnf_path" --assumeyes -q repoquery --upgrades </dev/null >/dev/null ||
 	fail "the zabbix user cannot query DNF updates"
 
 printf '%s\n' 'Downloading release files...'
