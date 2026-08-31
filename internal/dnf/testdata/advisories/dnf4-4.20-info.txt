@@ -1,0 +1,11 @@
+===============================================================================
+  Important: curl security update
+===============================================================================
+  Update ID: RLSA-2026:55432
+       Type: security
+    Updated: 2026-08-29 06:14:12
+       Bugs: 2496769 -
+       CVEs: CVE-2026-8927
+Description: curl security update.
+   Severity: Important
+  Installed: false

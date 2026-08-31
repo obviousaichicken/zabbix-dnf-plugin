@@ -1,7 +1,9 @@
 package results_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -241,6 +243,70 @@ func TestBuildSummaryUsesExpectedJSONShape(t *testing.T) {
 		if !strings.Contains(jsonText, field) {
 			t.Fatalf("JSON payload does not contain %s: %s", field, jsonText)
 		}
+	}
+}
+
+func TestLegacyDNFGetGolden(t *testing.T) {
+	t.Parallel()
+
+	payload, err := results.Build(
+		[]dnf.Repository{
+			{ID: updatesRepository, Name: updatesName},
+			{ID: codeRepository, Name: "Visual Studio Code"},
+		},
+		[]dnf.Update{
+			{
+				RepositoryID: updatesRepository,
+				Name:         "zlib",
+				Epoch:        "1",
+				Version:      "1.3.1",
+				Release:      "2.fc44",
+				Arch:         x8664Arch,
+				Type:         dnf.UpdateTypeSecurity,
+			},
+			{
+				RepositoryID: codeRepository,
+				Name:         codeName,
+				Version:      "1.104.0",
+				Release:      "1755709794.el8",
+				Arch:         x8664Arch,
+				Type:         dnf.UpdateTypeOther,
+			},
+			{
+				RepositoryID: updatesRepository,
+				Name:         "bash",
+				Epoch:        "0",
+				Version:      "5.2.37",
+				Release:      "4.fc44",
+				Arch:         x8664Arch,
+				Type:         dnf.UpdateTypeBugfix,
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	timestamp := time.Date(2026, time.August, 19, 21, 14, 8, 0, time.UTC)
+	payload.Summary.RebootPending = true
+	payload.Summary.LastUpdate = results.NewLastUpdate(&dnf.LastUpdate{
+		Timestamp: timestamp,
+		Result:    dnf.LastUpdateResultSuccess,
+	})
+
+	got, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	want, err := os.ReadFile("testdata/dnf-get.golden.json")
+	if err != nil {
+		t.Fatalf("read golden payload: %v", err)
+	}
+	want = bytes.TrimSuffix(want, []byte("\n"))
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf("legacy dnf.get payload changed\ngot:  %s\nwant: %s", got, want)
 	}
 }
 

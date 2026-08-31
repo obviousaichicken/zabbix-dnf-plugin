@@ -1,0 +1,16 @@
+[
+  {
+    "name": "FEDORA-2026-2f88b83676",
+    "type": "security",
+    "severity": "Important",
+    "nevra": "curl-8.18.0-9.fc44.x86_64",
+    "buildtime": 1787792076
+  },
+  {
+    "name": "FEDORA-2026-2f88b83676",
+    "type": "security",
+    "severity": "Important",
+    "nevra": "libcurl-8.18.0-9.fc44.x86_64",
+    "buildtime": 1787792076
+  }
+]

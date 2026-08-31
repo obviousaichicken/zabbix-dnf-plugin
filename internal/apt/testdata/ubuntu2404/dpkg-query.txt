@@ -1,0 +1,2 @@
+libproc2-0:amd64|amd64|2:4.0.4-4ubuntu3.2|installed
+libssl3t64:amd64|amd64|3.0.13-0ubuntu3.12|installed

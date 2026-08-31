@@ -50,7 +50,31 @@ check_operating_system() {
 
 	# shellcheck disable=SC1091 # The operating system provides this file.
 	. /etc/os-release
+	os_id="${ID:-}"
 	os_version="${VERSION_ID:-}"
+
+	case "$os_id" in
+	debian)
+		case "$os_version" in
+		12 | 13)
+			package_backend=apt
+			return
+			;;
+		*) fail "unsupported Debian version ${os_version:-unknown}; require Debian 12 or 13" ;;
+		esac
+		;;
+	ubuntu)
+		case "$os_version" in
+		22.04 | 24.04 | 26.04)
+			package_backend=apt
+			return
+			;;
+		*) fail "unsupported Ubuntu version ${os_version:-unknown}; require Ubuntu 22.04, 24.04, or 26.04" ;;
+		esac
+		;;
+	esac
+
+	# Preserve the existing DNF-family version gate for all other IDs.
 	os_major="${os_version%%.*}"
 
 	case "$os_major" in
@@ -62,6 +86,71 @@ check_operating_system() {
 	if [ "$os_major" -lt 8 ]; then
 		fail "unsupported operating system version $os_version; require a DNF-based version 8 or newer"
 	fi
+
+	package_backend=dnf
+}
+
+check_dnf_access() {
+	printf '%s\n' 'Checking DNF access...'
+	dnf_path="$(command -v dnf)"
+	run_as_zabbix "$dnf_path" --assumeyes -q repolist </dev/null >/dev/null ||
+		fail "the zabbix user cannot list DNF repositories"
+	run_as_zabbix "$dnf_path" --assumeyes -q repoquery --upgrades </dev/null >/dev/null ||
+		fail "the zabbix user cannot query DNF updates"
+}
+
+check_apt_access() {
+	printf '%s\n' 'Checking APT access...'
+	apt_get_path="$(command -v apt-get)"
+	apt_cache_path="$(command -v apt-cache)"
+	dpkg_query_path="$(command -v dpkg-query)"
+	dpkg_path="$(command -v dpkg)"
+
+	apt_index_output="$(run_as_zabbix "$apt_get_path" indextargets)" ||
+		fail "the zabbix user cannot inspect APT package indexes"
+	case "$apt_index_output" in
+	*'Identifier: Packages'*) ;;
+	*)
+		fail "APT package indexes are not populated; run apt-get update as root and retry"
+		;;
+	esac
+
+	run_as_zabbix "$dpkg_query_path" --show \
+		'--showformat=${binary:Package}|${Architecture}|${Version}|${db:Status-Status}\n' \
+		>/dev/null || fail "the zabbix user cannot query installed packages"
+
+	policy_package="$(
+		run_as_zabbix "$dpkg_query_path" --show \
+			'--showformat=${Package}:${Architecture}\n' dpkg
+	)" || fail "the zabbix user cannot resolve an installed package for APT policy preflight"
+	[ -n "$policy_package" ] || fail "APT policy preflight found no installed dpkg package"
+	run_as_zabbix "$apt_cache_path" policy "$policy_package" >/dev/null ||
+		fail "the zabbix user cannot query APT package policy"
+	run_as_zabbix "$dpkg_path" --compare-versions 1 eq 1 ||
+		fail "the zabbix user cannot compare Debian package versions"
+}
+
+test_agent_item() {
+	item_key=$1
+	expected_backend=$2
+
+	printf 'Testing %s as the zabbix user...\n' "$item_key"
+	test_output="$(
+		run_as_zabbix \
+			zabbix_agent2 -c "$agent_config" -t "$item_key"
+	)"
+	printf '%s\n' "$test_output"
+
+	case "$test_output" in
+	*"[s|"*'"collection":{"complete":true'*) ;;
+	*) fail "$item_key did not return a complete collection" ;;
+	esac
+	if [ -n "$expected_backend" ]; then
+		case "$test_output" in
+		*"\"backend\":\"${expected_backend}\""*) ;;
+		*) fail "$item_key did not report the $expected_backend backend" ;;
+		esac
+	fi
 }
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -72,11 +161,26 @@ if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
 	fail "only Linux on x86_64 is supported"
 fi
 
+package_backend=
 check_operating_system
 
-for command_name in curl dnf env getent sha256sum install mktemp rpm runuser zabbix_agent2; do
+for command_name in curl env getent sha256sum install mktemp runuser zabbix_agent2; do
 	command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: ${command_name}"
 done
+
+case "$package_backend" in
+dnf)
+	for command_name in dnf rpm; do
+		command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: ${command_name}"
+	done
+	;;
+apt)
+	for command_name in apt-get apt-cache dpkg-query dpkg; do
+		command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: ${command_name}"
+	done
+	;;
+*) fail "internal error: no package backend selected" ;;
+esac
 
 zabbix_account="$(getent passwd zabbix)" || fail "required user not found: zabbix"
 zabbix_home="${zabbix_account%:*}"
@@ -115,12 +219,10 @@ run_as_zabbix() {
 	runuser -u zabbix -- env HOME="$zabbix_home" "$@"
 }
 
-printf '%s\n' 'Checking DNF access...'
-dnf_path="$(command -v dnf)"
-run_as_zabbix "$dnf_path" --assumeyes -q repolist </dev/null >/dev/null ||
-	fail "the zabbix user cannot list DNF repositories"
-run_as_zabbix "$dnf_path" --assumeyes -q repoquery --upgrades </dev/null >/dev/null ||
-	fail "the zabbix user cannot query DNF updates"
+case "$package_backend" in
+dnf) check_dnf_access ;;
+apt) check_apt_access ;;
+esac
 
 printf '%s\n' 'Downloading release files...'
 for file_name in zabbix-dnf-plugin zabbix-dnf-plugin.sha256 dnf.conf; do
@@ -157,16 +259,12 @@ else
 	systemctl is-active --quiet zabbix-agent2 || fail "zabbix-agent2 did not start"
 fi
 
-printf '%s\n' 'Testing dnf.get as the zabbix user...'
-test_output="$(
-	run_as_zabbix \
-		zabbix_agent2 -c "$agent_config" -t dnf.get
-)"
-printf '%s\n' "$test_output"
-
-case "$test_output" in
-	*"[s|"*'"collection":{"complete":true'*) ;;
-	*) fail "dnf.get did not return a complete collection" ;;
+case "$package_backend" in
+dnf)
+	test_agent_item dnf.get ""
+	test_agent_item packages.get dnf
+	;;
+apt) test_agent_item packages.get apt ;;
 esac
 
 printf '%s\n' 'Installation completed successfully.'

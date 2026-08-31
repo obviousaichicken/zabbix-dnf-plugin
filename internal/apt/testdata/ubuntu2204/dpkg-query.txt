@@ -1,0 +1,1 @@
+libssl3:amd64|amd64|3.0.2-0ubuntu1.26|installed

@@ -1,0 +1,11 @@
+libssl3t64:
+  Installed: 3.5.5-1ubuntu3.3
+  Candidate: 3.5.5-1ubuntu3.4
+  Version table:
+     3.5.5-1ubuntu3.4 500
+        500 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 Packages
+        500 http://security.ubuntu.com/ubuntu resolute-security/main amd64 Packages
+ *** 3.5.5-1ubuntu3.3 100
+        100 /var/lib/dpkg/status
+     3.5.5-1ubuntu3 500
+        500 http://archive.ubuntu.com/ubuntu resolute/main amd64 Packages

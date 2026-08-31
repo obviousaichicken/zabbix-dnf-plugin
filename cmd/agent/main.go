@@ -22,10 +22,12 @@ import (
 )
 
 const (
-	pluginName        = "DNF"
-	metricGet         = "dnf.get"
-	testArg           = "--test"
-	collectionTimeout = 2 * time.Minute
+	pluginName          = "DNF"
+	metricGet           = "dnf.get"
+	metricPackagesGet   = "packages.get"
+	metricAdvisoriesGet = "dnf.advisories.get"
+	testArg             = "--test"
+	collectionTimeout   = 2 * time.Minute
 )
 
 func main() {
@@ -60,10 +62,10 @@ func runCollection(stdout, stderr io.Writer) error {
 	)
 	defer stop()
 
-	pluginInstance := &Plugin{
-		runner: command.Runner{},
-		logger: slog.New(slog.NewTextHandler(stderr, nil)),
-	}
+	pluginInstance := newPlugin(
+		command.Runner{},
+		slog.New(slog.NewTextHandler(stderr, nil)),
+	)
 
 	return collectAndWrite(ctx, stdout, pluginInstance.collect)
 }
@@ -103,18 +105,18 @@ func runAgent() error {
 	)
 	defer stopSignals()
 
-	pluginInstance := &Plugin{
-		Base:    plugin.Base{Logger: log.New(pluginName)},
-		runner:  command.Runner{},
-		logger:  nil,
-		timeout: 0,
-	}
+	pluginInstance := newPlugin(command.Runner{}, nil)
+	pluginInstance.Base = plugin.Base{Logger: log.New(pluginName)}
 
 	err := plugin.RegisterMetrics(
 		pluginInstance,
 		pluginName,
 		metricGet,
 		"Returns package repositories, available updates, and reboot status.",
+		metricPackagesGet,
+		"Returns a package-manager-neutral package update snapshot.",
+		metricAdvisoriesGet,
+		"Returns applicable DNF security advisory intelligence.",
 	)
 	if err != nil {
 		return fmt.Errorf("register metrics: %w", err)

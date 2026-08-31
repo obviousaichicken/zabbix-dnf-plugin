@@ -1,0 +1,47 @@
+MetaKey: main/binary-amd64/Packages
+ShortDesc: Packages
+Description: http://deb.debian.org/debian bookworm/main amd64 Packages
+URI: http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages
+Filename: /var/lib/apt/lists/deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages.lz4
+Optional: no
+KeepCompressed: yes
+Codename: bookworm
+Label: Debian
+Origin: Debian
+Suite: oldstable
+Trusted: yes
+Version: 12.15
+Architecture: amd64
+Base-URI: http://deb.debian.org/debian/dists/bookworm/
+Component: main
+Created-By: Packages
+DefaultEnabled: yes
+Identifier: Packages
+Release: bookworm
+Repo-URI: http://deb.debian.org/debian/
+Site: http://deb.debian.org/debian
+Target-Of: deb
+
+MetaKey: main/binary-amd64/Packages
+ShortDesc: Packages
+Description: http://deb.debian.org/debian-security bookworm-security/main amd64 Packages
+URI: http://deb.debian.org/debian-security/dists/bookworm-security/main/binary-amd64/Packages
+Filename: /var/lib/apt/lists/deb.debian.org_debian-security_dists_bookworm-security_main_binary-amd64_Packages.lz4
+Optional: no
+KeepCompressed: yes
+Codename: bookworm-security
+Label: Debian-Security
+Origin: Debian
+Suite: oldstable-security
+Trusted: yes
+Version: 12
+Architecture: amd64
+Base-URI: http://deb.debian.org/debian-security/dists/bookworm-security/
+Component: main
+Created-By: Packages
+DefaultEnabled: yes
+Identifier: Packages
+Release: bookworm-security
+Repo-URI: http://deb.debian.org/debian-security/
+Site: http://deb.debian.org/debian-security
+Target-Of: deb

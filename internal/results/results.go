@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/dnf"
+	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/packageinfo"
 )
 
 var (
@@ -60,10 +60,10 @@ type LastUpdate struct {
 	Result    string     `json:"result"`
 }
 
-// NewLastUpdate converts a DNF last update to payload form.
-func NewLastUpdate(update *dnf.LastUpdate) LastUpdate {
+// NewLastUpdate converts a neutral last update to payload form.
+func NewLastUpdate(update *packageinfo.LastUpdate) LastUpdate {
 	if update == nil {
-		return LastUpdate{Result: dnf.LastUpdateResultNotRecorded}
+		return LastUpdate{Result: packageinfo.LastUpdateResultNotRecorded}
 	}
 
 	return LastUpdate{
@@ -90,11 +90,19 @@ type Update struct {
 }
 
 // Build creates a sorted plugin payload and validates repository references.
-//
-//nolint:funlen // Build keeps payload validation and ordering together.
 func Build(
-	repositories []dnf.Repository,
-	updates []dnf.Update,
+	repositories []packageinfo.Repository,
+	updates []packageinfo.Update,
+) (Payload, error) {
+	return BuildLegacy(repositories, updates)
+}
+
+// BuildLegacy creates the byte-compatible dnf.get payload.
+//
+//nolint:funlen // BuildLegacy keeps payload validation and ordering together.
+func BuildLegacy(
+	repositories []packageinfo.Repository,
+	updates []packageinfo.Update,
 ) (Payload, error) {
 	result := Payload{
 		Collection: Collection{
@@ -191,23 +199,23 @@ func Build(
 	return result, nil
 }
 
-func countUpdateTypes(updates []dnf.Update) UpdateTypeCounts {
+func countUpdateTypes(updates []packageinfo.Update) UpdateTypeCounts {
 	counts := UpdateTypeCounts{
 		Other: len(updates),
 	}
 
 	for _, update := range updates {
 		switch update.Type {
-		case dnf.UpdateTypeSecurity:
+		case packageinfo.UpdateTypeSecurity:
 			counts.Security++
 			counts.Other--
-		case dnf.UpdateTypeBugfix:
+		case packageinfo.UpdateTypeBugfix:
 			counts.Bugfix++
 			counts.Other--
-		case dnf.UpdateTypeEnhancement:
+		case packageinfo.UpdateTypeEnhancement:
 			counts.Enhancement++
 			counts.Other--
-		case dnf.UpdateTypeOther:
+		case packageinfo.UpdateTypeOther, packageinfo.UpdateTypeUnknown:
 			continue
 		}
 	}

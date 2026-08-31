@@ -1,9 +1,10 @@
 package dnf_test
 
 import (
-	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/dnf"
 	"reflect"
 	"testing"
+
+	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/dnf"
 )
 
 func TestParseUpdates(t *testing.T) {
@@ -27,6 +28,7 @@ func TestParseUpdates(t *testing.T) {
 			Release:      "1787078888.el8",
 			Arch:         "x86_64",
 			RepositoryID: "code",
+			Type:         dnf.UpdateTypeOther,
 		},
 		{
 			Name:         "libei",
@@ -35,6 +37,7 @@ func TestParseUpdates(t *testing.T) {
 			Release:      "2.fc44",
 			Arch:         "x86_64",
 			RepositoryID: "updates",
+			Type:         dnf.UpdateTypeOther,
 		},
 	}
 

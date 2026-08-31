@@ -55,6 +55,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Validate template contracts
+        run: ruby .github/ci/validate_templates.rb
+
       - name: Start Zabbix test environment
         run: |
           docker compose \

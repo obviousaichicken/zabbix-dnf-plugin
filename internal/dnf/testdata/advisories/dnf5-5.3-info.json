@@ -1,0 +1,29 @@
+[
+  {
+    "Name": "FEDORA-2026-2f88b83676",
+    "Title": "curl-8.18.0-9.fc44",
+    "Severity": "Important",
+    "Type": "security",
+    "Status": "stable",
+    "Vendor": "updates@fedoraproject.org",
+    "Issued": 1787792076,
+    "Description": "Security fixes including CVE-2026-8925 and CVE-2026-8286",
+    "Message": "",
+    "Rights": "Copyright omitted from collection",
+    "references": [
+      {
+        "Title": "CVE-2026-8925 curl vulnerability",
+        "Id": "2497491",
+        "Type": "bugzilla",
+        "Url": "https://bugzilla.redhat.com/show_bug.cgi?id=2497491"
+      }
+    ],
+    "collections": {
+      "packages": [
+        "curl-8.18.0-9.fc44.src",
+        "curl-8.18.0-9.fc44.x86_64",
+        "libcurl-8.18.0-9.fc44.x86_64"
+      ]
+    }
+  }
+]

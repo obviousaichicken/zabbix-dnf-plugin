@@ -82,10 +82,5 @@ func markUpdateType(updates, classified []Update, updateType UpdateType) {
 }
 
 func updatePackageKey(update Update) string {
-	return update.Name + "\x00" +
-		update.Epoch + "\x00" +
-		update.Version + "\x00" +
-		update.Release + "\x00" +
-		update.Arch + "\x00" +
-		update.RepositoryID
+	return NEVRAFromUpdate(update).exactKey() + "\x00" + update.RepositoryID
 }

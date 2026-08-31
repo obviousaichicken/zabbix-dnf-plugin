@@ -1,0 +1,9 @@
+libssl3t64:
+  Installed: 3.5.6-1~deb13u2
+  Candidate: 3.5.7-1~deb13u2
+  Version table:
+     3.5.7-1~deb13u2 500
+        500 http://deb.debian.org/debian-security trixie-security/main amd64 Packages
+ *** 3.5.6-1~deb13u2 500
+        500 http://deb.debian.org/debian trixie/main amd64 Packages
+        100 /var/lib/dpkg/status

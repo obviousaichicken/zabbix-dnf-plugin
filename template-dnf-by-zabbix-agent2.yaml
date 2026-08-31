@@ -29,6 +29,608 @@ zabbix_export:
               value: raw
             - tag: component
               value: updates
+        - uuid: 08f65d52266a4db8acd8067fa07ffb4c
+          name: 'DNF: Get advisory data'
+          type: ZABBIX_PASSIVE
+          key: dnf.advisories.get
+          delay: '{$DNF.ADVISORY.UPDATE.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Collects applicable DNF security advisories independently from package-update monitoring. DNF4 intentionally returns compact relationship data, while DNF5 can return complete titles, CVEs, and issue dates.'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+            - tag: component
+              value: security
+        - uuid: 71e2e9c290414e79b76e0a151d1631ca
+          name: 'DNF: Advisory discovery data'
+          type: DEPENDENT
+          key: dnf.advisory.discovery.data
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Validates the complete advisory payload and severity-selection macros, then projects the compact records shared by advisory discovery and its dependent item prototypes. The default macro values produce an empty array. Invalid or incomplete input makes this item unsupported instead of falsely marking discovered advisories absent.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  var selections = {
+                    critical: '{$DNF.ADVISORY.LLD.CRITICAL}',
+                    important: '{$DNF.ADVISORY.LLD.IMPORTANT}',
+                    moderate: '{$DNF.ADVISORY.LLD.MODERATE}',
+                    low: '{$DNF.ADVISORY.LLD.LOW}',
+                    unknown: '{$DNF.ADVISORY.LLD.UNKNOWN}'
+                  };
+
+                  for (var selectedSeverity in selections) {
+                    if (Object.prototype.hasOwnProperty.call(selections, selectedSeverity) &&
+                        selections[selectedSeverity] !== '0' && selections[selectedSeverity] !== '1') {
+                      throw 'Advisory discovery macro for ' + selectedSeverity + ' must be exactly 0 or 1';
+                    }
+                  }
+
+                  if (!data || typeof data !== 'object' || Array.isArray(data) || data.schema_version !== 1) {
+                    throw 'Advisory discovery requires schema version 1';
+                  }
+                  if (!data.collection || data.collection.complete !== true) {
+                    throw 'Advisory discovery requires a complete collection';
+                  }
+                  if (!data.metadata || data.metadata.details_complete !== true ||
+                      data.metadata.cves_complete !== true || data.metadata.issue_dates_complete !== true) {
+                    throw 'Advisory discovery requires complete detail, CVE, and issue-date metadata';
+                  }
+                  if (!Array.isArray(data.advisories) || !data.summary ||
+                      data.summary.advisories !== data.advisories.length) {
+                    throw 'Advisory discovery payload count is inconsistent';
+                  }
+
+                  function safeIdentifier(id) {
+                    if (typeof id !== 'string' || id.length === 0) {
+                      throw 'Advisory discovery record has an invalid ID';
+                    }
+                    if (id.length > 256) {
+                      throw 'Advisory discovery ID exceeds 256 UTF-16 code units';
+                    }
+
+                    var encoded = 'a';
+                    for (var character = 0; character < id.length; character++) {
+                      var hex = id.charCodeAt(character).toString(16);
+                      while (hex.length < 4) {
+                        hex = '0' + hex;
+                      }
+                      encoded += hex;
+                    }
+                    return encoded;
+                  }
+
+                  function sortedStringArray(values, field, id) {
+                    if (!Array.isArray(values)) {
+                      throw 'Advisory ' + id + ' has an invalid ' + field + ' array';
+                    }
+
+                    var result = [];
+                    var seen = {};
+                    for (var index = 0; index < values.length; index++) {
+                      if (typeof values[index] !== 'string') {
+                        throw 'Advisory ' + id + ' has a non-string ' + field + ' value';
+                      }
+                      var seenKey = '$' + values[index];
+                      if (!Object.prototype.hasOwnProperty.call(seen, seenKey)) {
+                        seen[seenKey] = true;
+                        result.push(values[index]);
+                      }
+                    }
+                    result.sort();
+                    return result;
+                  }
+
+                  var records = [];
+                  var seenIDs = {};
+                  var seenSafeIDs = {};
+                  for (var advisoryIndex = 0; advisoryIndex < data.advisories.length; advisoryIndex++) {
+                    var advisory = data.advisories[advisoryIndex];
+                    if (!advisory || typeof advisory !== 'object' || Array.isArray(advisory)) {
+                      throw 'Advisory discovery record is not an object';
+                    }
+
+                    var id = advisory.id;
+                    var safeID = safeIdentifier(id);
+                    var seenIDKey = '$' + id;
+                    if (Object.prototype.hasOwnProperty.call(seenIDs, seenIDKey) ||
+                        Object.prototype.hasOwnProperty.call(seenSafeIDs, safeID)) {
+                      throw 'Advisory discovery record has a duplicate ID';
+                    }
+                    seenIDs[seenIDKey] = true;
+                    seenSafeIDs[safeID] = true;
+
+                    var severity = advisory.severity;
+                    if (!Object.prototype.hasOwnProperty.call(selections, severity)) {
+                      throw 'Advisory ' + id + ' has an invalid severity';
+                    }
+                    if (advisory.type !== 'security') {
+                      throw 'Advisory ' + id + ' is not a security advisory';
+                    }
+                    if (typeof advisory.title !== 'string' || advisory.title.length === 0) {
+                      throw 'Advisory ' + id + ' has an invalid title';
+                    }
+                    if (typeof advisory.issued_at !== 'string') {
+                      throw 'Advisory ' + id + ' has no complete issue timestamp';
+                    }
+
+                    var vendorTimestamp = Date.parse(advisory.issued_at);
+                    if (isNaN(vendorTimestamp) || vendorTimestamp < 0) {
+                      throw 'Advisory ' + id + ' has an invalid issue timestamp';
+                    }
+                    vendorTimestamp = Math.floor(vendorTimestamp / 1000);
+
+                    var packages = sortedStringArray(
+                      advisory.affected_update_nevras,
+                      'affected package',
+                      id
+                    );
+                    var cves = sortedStringArray(advisory.cve_ids, 'CVE', id);
+
+                    if (selections[severity] === '1') {
+                      records.push({
+                        safe_id: safeID,
+                        id: id,
+                        severity: severity,
+                        title: advisory.title,
+                        presence: 1,
+                        vendor_timestamp: vendorTimestamp,
+                        affected_package_count: packages.length,
+                        affected_packages: JSON.stringify(packages),
+                        cves: JSON.stringify(cves)
+                      });
+                    }
+                  }
+
+                  records.sort(function (left, right) {
+                    if (left.safe_id < right.safe_id) {
+                      return -1;
+                    }
+                    if (left.safe_id > right.safe_id) {
+                      return 1;
+                    }
+                    return 0;
+                  });
+                  return JSON.stringify(records);
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: ff3655362d88404ea8ef49b962176c03
+          name: 'DNF: Advisory collection complete'
+          type: DEPENDENT
+          key: dnf.advisory.collection.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether the independent advisory collection completed successfully. Command or parser failures make the master item unsupported and are detected by the no-data condition.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: 2188c13a58524751ab6c914b1eb9fe37
+              expression: 'last(/DNF by Zabbix agent 2/dnf.advisory.collection.complete)=0 or nodata(/DNF by Zabbix agent 2/dnf.advisory.collection.complete,{$DNF.ADVISORY.NODATA.TIME})=1'
+              name: 'DNF: Advisory collection is unavailable'
+              opdata: 'Last advisory collection status: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'DNF advisory data is stale or unavailable. Package-update monitoring remains independent.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: availability
+        - uuid: 9f01cbb8803f44df9de9a79bb737b3bb
+          name: 'DNF: Advisory collection duration'
+          type: DEPENDENT
+          key: dnf.advisory.collection.duration
+          value_type: FLOAT
+          units: s
+          description: 'Time spent collecting the independent advisory payload, in seconds.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.duration_ms
+            - type: MULTIPLIER
+              parameters:
+                - '0.001'
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 881245196ffe43e69801400d8ff74e77
+          name: 'DNF: Advisory details complete'
+          type: DEPENDENT
+          key: dnf.advisory.details.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether titles and detail relationships are complete. This is normally false on DNF4 because its bounded strategy omits the bulk detail command.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.metadata.details_complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: 9994bfb13d214c92a19b34f0c8174311
+              expression: 'last(/DNF by Zabbix agent 2/dnf.advisory.details.complete)=0 or last(/DNF by Zabbix agent 2/dnf.advisory.cves.complete)=0 or last(/DNF by Zabbix agent 2/dnf.advisory.issue_dates.complete)=0'
+              name: 'DNF: Advisory metadata is incomplete'
+              opdata: 'Details: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'One or more advisory detail, CVE, or issue-date capabilities are incomplete. DNF4 reports this by design; known compact advisory and package relationships remain usable.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: notice
+        - uuid: 1fc2be7824d143e4a6f3205374dca630
+          name: 'DNF: Advisory CVEs complete'
+          type: DEPENDENT
+          key: dnf.advisory.cves.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether the unique CVE count is authoritative. A false value means the reported CVEs are known data, not proof that other CVEs do not apply.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.metadata.cves_complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 22f2c121abff4010b758c78dfd3a907e
+          name: 'DNF: Advisory issue dates complete'
+          type: DEPENDENT
+          key: dnf.advisory.issue_dates.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether true vendor issue dates are complete. DNF4 normally exposes only Updated timestamps when detail is available and therefore cannot claim this capability.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.metadata.issue_dates_complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 5f64cd8649b94cc8ab8609e6fbb1623f
+          name: 'DNF: Security advisories total'
+          type: DEPENDENT
+          key: dnf.advisory.total
+          value_type: UNSIGNED
+          description: 'Number of unique applicable security advisory IDs.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: e458e63e45014a60be4ae27d98ebc7d6
+          name: 'DNF: Unique known CVEs'
+          type: DEPENDENT
+          key: dnf.advisory.cves
+          value_type: UNSIGNED
+          description: 'Number of unique known CVE IDs. This count is authoritative only when the advisory CVE completeness item is Yes.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.unique_cves
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 547a5b36f7c8408c83e4dd8bf00d00e0
+          name: 'DNF: Security advisories critical'
+          type: DEPENDENT
+          key: dnf.advisory.critical
+          value_type: UNSIGNED
+          description: 'Number of unique applicable Critical security advisories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.critical
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: e4749b89b65a4544ab2a894af864d6bf
+              expression: 'last(/DNF by Zabbix agent 2/dnf.advisory.critical)>={$DNF.SECURITY.CRITICAL.MIN}'
+              name: 'DNF: Critical security advisories are applicable'
+              opdata: 'Critical advisories: {ITEM.LASTVALUE1}'
+              priority: DISASTER
+              description: 'One or more Critical DNF security advisories apply to pending package updates.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+        - uuid: c1c36bd5e1454b1f834d2a1e6ed161fc
+          name: 'DNF: Security advisories important'
+          type: DEPENDENT
+          key: dnf.advisory.important
+          value_type: UNSIGNED
+          description: 'Number of unique applicable Important security advisories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.important
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: 09a754faea1843cda7d97aa69cc55770
+              expression: 'last(/DNF by Zabbix agent 2/dnf.advisory.critical)<{$DNF.SECURITY.CRITICAL.MIN} and last(/DNF by Zabbix agent 2/dnf.advisory.important)>={$DNF.SECURITY.IMPORTANT.MIN}'
+              name: 'DNF: Important security advisories are applicable'
+              opdata: 'Important advisories: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Important DNF security advisories apply and the Critical threshold is not met, keeping the Critical and Important problems mutually exclusive.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+        - uuid: dbcad7e6d35a4018b85727fa752bda97
+          name: 'DNF: Security advisories moderate'
+          type: DEPENDENT
+          key: dnf.advisory.moderate
+          value_type: UNSIGNED
+          description: 'Number of unique applicable Moderate security advisories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.moderate
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 4c322f2a70704473b4c3070e8cff1e16
+          name: 'DNF: Security advisories low'
+          type: DEPENDENT
+          key: dnf.advisory.low
+          value_type: UNSIGNED
+          description: 'Number of unique applicable Low security advisories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.low
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 010da202032240afa814406cb7c0daaa
+          name: 'DNF: Security advisories unknown severity'
+          type: DEPENDENT
+          key: dnf.advisory.unknown
+          value_type: UNSIGNED
+          description: 'Number of unique applicable advisories whose vendor severity is absent or unrecognized.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.unknown
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: 1e77d1176b13464585ad9d2c21e7f11f
+              expression: 'last(/DNF by Zabbix agent 2/dnf.advisory.unknown)>{$DNF.SECURITY.UNKNOWN.MAX} or last(/DNF by Zabbix agent 2/dnf.advisory.packages.unknown)>{$DNF.SECURITY.UNKNOWN.MAX}'
+              name: 'DNF: Security advisory severity is unknown'
+              opdata: 'Unknown advisories: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'The number of advisories or affected package updates with Unknown severity exceeds the configured maximum.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+        - uuid: 24b24256d3c84495809a079c8a2f5a15
+          name: 'DNF: Affected package updates critical'
+          type: DEPENDENT
+          key: dnf.advisory.packages.critical
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Critical.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.critical
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: 06e19598e8b34cfa828079f8ca1c88c6
+              expression: 'last(/DNF by Zabbix agent 2/dnf.updates.security)>(last(/DNF by Zabbix agent 2/dnf.advisory.packages.critical)+last(/DNF by Zabbix agent 2/dnf.advisory.packages.important)+last(/DNF by Zabbix agent 2/dnf.advisory.packages.moderate)+last(/DNF by Zabbix agent 2/dnf.advisory.packages.low)+last(/DNF by Zabbix agent 2/dnf.advisory.packages.unknown))'
+              name: 'DNF: Security package updates lack advisory objects'
+              opdata: 'Security updates: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The package classifier reports more security updates than the advisory collector can link to advisory objects. Investigate metadata freshness or vendor relationship ambiguity.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: notice
+        - uuid: 28dcb87fd35e40cfafb7be1ce732ee04
+          name: 'DNF: Affected package updates important'
+          type: DEPENDENT
+          key: dnf.advisory.packages.important
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Important.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.important
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 933776b7bd734114a17f661b81e4e554
+          name: 'DNF: Affected package updates moderate'
+          type: DEPENDENT
+          key: dnf.advisory.packages.moderate
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Moderate.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.moderate
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 4e35b3b4fd4f43b1a559f9a8905b33ec
+          name: 'DNF: Affected package updates low'
+          type: DEPENDENT
+          key: dnf.advisory.packages.low
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Low.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.low
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: a5c9ac80d7a147ac8388f332f288728d
+          name: 'DNF: Affected package updates unknown severity'
+          type: DEPENDENT
+          key: dnf.advisory.packages.unknown
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Unknown.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.unknown
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 0f5e596fac284c43943dd23ba7fb9ac2
+          name: 'DNF: Oldest advisory vendor timestamp'
+          type: DEPENDENT
+          key: dnf.advisory.oldest.timestamp
+          value_type: UNSIGNED
+          units: unixtime
+          trends: '0'
+          description: 'Unix timestamp of the oldest preferred vendor timestamp. Issue dates are preferred; Updated is used only when an issue date is unavailable. No value is stored when no vendor timestamp is known.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var timestamp = JSON.parse(value).summary.oldest_vendor_timestamp;
+                  if (timestamp === null) {
+                    return null;
+                  }
+
+                  var milliseconds = Date.parse(timestamp);
+                  if (isNaN(milliseconds)) {
+                    throw 'Invalid oldest vendor timestamp';
+                  }
+
+                  return Math.floor(milliseconds / 1000);
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 66112974eef648cb8a98360ed25b7752
+          name: 'DNF: Oldest advisory vendor age'
+          type: DEPENDENT
+          key: dnf.advisory.oldest.age
+          value_type: UNSIGNED
+          units: s
+          description: 'Age of the oldest preferred vendor timestamp in seconds. Future vendor timestamps are reported by the plugin as age zero.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var age = JSON.parse(value).summary.oldest_vendor_age_seconds;
+                  if (age === null) {
+                    return null;
+                  }
+                  if (typeof age !== 'number' || age < 0 || !isFinite(age)) {
+                    throw 'Invalid oldest vendor age';
+                  }
+
+                  return Math.floor(age);
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: fc9d20b0c3ed4eba8162c779147197fd
+              expression: 'last(/DNF by Zabbix agent 2/dnf.advisory.oldest.age)>{$DNF.SECURITY.ADVISORY.MAX.AGE}'
+              name: 'DNF: Applicable security advisory is old'
+              opdata: 'Oldest vendor age: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The oldest known vendor timestamp for an applicable advisory exceeds the configured maximum age.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+        - uuid: 4d52f385fe314d188718520cd0aef613
+          name: 'DNF: Oldest advisory timestamp basis'
+          type: DEPENDENT
+          key: dnf.advisory.oldest.basis
+          value_type: CHAR
+          trends: '0'
+          description: 'Basis of the oldest vendor timestamp: issued, updated, or none.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.oldest_vendor_timestamp_basis
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
         - uuid: 3fd9d579bf414eb094f11f6ff9cb0e0a
           name: 'DNF: Collection complete'
           type: DEPENDENT
@@ -441,7 +1043,244 @@ zabbix_export:
               path: $.id
             - lld_macro: '{#REPO_NAME}'
               path: $.name
+        - uuid: dd7f6b9ba90f483f9f8d0943b7ce6ee9
+          name: 'DNF: Advisory discovery'
+          type: DEPENDENT
+          key: dnf.advisory.discovery
+          delay: '0'
+          lifetime_type: DELETE_AFTER
+          lifetime: 30d
+          enabled_lifetime_type: DISABLE_AFTER
+          enabled_lifetime: 1d
+          description: 'Discovers only advisory severities explicitly enabled by the LLD macros. Lost advisory items remain enabled for one day so the presence value can become zero and recover the trigger, then remain disabled until deletion after 30 days. Invalid macros or incomplete metadata make discovery unsupported rather than returning a false empty list.'
+          item_prototypes:
+            - uuid: 3aa7af243dfc48088a9e893ecd2c08b6
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: Presence'
+              type: DEPENDENT
+              key: 'dnf.advisory.presence[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 30d
+              value_type: UNSIGNED
+              trends: '0'
+              description: 'Indicates that advisory {#ADVISORY_ID} ({#ADVISORY_TITLE}) remains applicable. The value becomes zero on disappearance before the discovery lifecycle disables the item.'
+              valuemap:
+                name: 'DNF: No/Yes'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].presence.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+            - uuid: f61e32368a0744149953a5f697bbd37e
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: Vendor timestamp'
+              type: DEPENDENT
+              key: 'dnf.advisory.vendor.timestamp[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 30d
+              value_type: UNSIGNED
+              units: unixtime
+              trends: '0'
+              description: 'Preferred vendor issue timestamp for advisory {#ADVISORY_ID} ({#ADVISORY_TITLE}). Discovery requires complete issue-date metadata.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].vendor_timestamp.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+            - uuid: d053aac1f63b4aacacf70626ea3916ff
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: Affected package count'
+              type: DEPENDENT
+              key: 'dnf.advisory.packages.count[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 30d
+              value_type: UNSIGNED
+              trends: '0'
+              description: 'Number of unique pending package NEVRAs affected by advisory {#ADVISORY_ID}.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].affected_package_count.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+            - uuid: 219f186890ec474aa58a1dce2c74d01a
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: Affected package list'
+              type: DEPENDENT
+              key: 'dnf.advisory.packages.list[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 7d
+              value_type: TEXT
+              trends: '0'
+              description: 'Deterministically sorted JSON array of pending package NEVRAs affected by advisory {#ADVISORY_ID}.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].affected_packages.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '[]'
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+            - uuid: 78afb14f834a40e8ad5810e58d2707a3
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: CVE list'
+              type: DEPENDENT
+              key: 'dnf.advisory.cves.list[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 7d
+              value_type: TEXT
+              trends: '0'
+              description: 'Deterministically sorted JSON array of known CVE IDs for advisory {#ADVISORY_ID}. Discovery requires complete CVE metadata.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].cves.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '[]'
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+          trigger_prototypes:
+            - uuid: ef39db821a6e44158a67b9f3e220c456
+              expression: 'last(/DNF by Zabbix agent 2/dnf.advisory.presence[{#ADVISORY_SAFE_ID}])=1'
+              name: 'DNF: Advisory [{#ADVISORY_ID}] is applicable'
+              opdata: 'Severity: {#ADVISORY_SEVERITY}; title: {#ADVISORY_TITLE}'
+              priority: HIGH
+              description: 'Security advisory {#ADVISORY_ID} applies to one or more pending package updates. Severity is assigned by discovery override.'
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+          master_item:
+            key: dnf.advisory.discovery.data
+          lld_macro_paths:
+            - lld_macro: '{#ADVISORY_ID}'
+              path: $.id
+            - lld_macro: '{#ADVISORY_SAFE_ID}'
+              path: $.safe_id
+            - lld_macro: '{#ADVISORY_SEVERITY}'
+              path: $.severity
+            - lld_macro: '{#ADVISORY_TITLE}'
+              path: $.title
+          overrides:
+            - name: 'Critical advisory trigger severity'
+              step: '1'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^critical$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: DISASTER
+            - name: 'Important advisory trigger severity'
+              step: '2'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^important$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: HIGH
+            - name: 'Moderate advisory trigger severity'
+              step: '3'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^moderate$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: WARNING
+            - name: 'Low advisory trigger severity'
+              step: '4'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^low$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: INFO
+            - name: 'Unknown advisory trigger severity'
+              step: '5'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^unknown$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: HIGH
       macros:
+        - macro: '{$DNF.ADVISORY.NODATA.TIME}'
+          value: 2h
+          description: 'Time without a successful advisory collection before an availability problem is raised.'
+        - macro: '{$DNF.ADVISORY.LLD.CRITICAL}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Critical advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.LLD.IMPORTANT}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Important advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.LLD.LOW}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Low advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.LLD.MODERATE}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Moderate advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.LLD.UNKNOWN}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Unknown-severity advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.UPDATE.INTERVAL}'
+          value: 1h
+          description: 'Interval between independent DNF advisory collections.'
         - macro: '{$DNF.COLLECTION.DURATION.MAX}'
           value: '20'
           description: 'Maximum acceptable average collection duration, in seconds.'
@@ -454,6 +1293,18 @@ zabbix_export:
         - macro: '{$DNF.SECURITY.MIN}'
           value: '1'
           description: 'Minimum number of security updates that raises a problem.'
+        - macro: '{$DNF.SECURITY.ADVISORY.MAX.AGE}'
+          value: 7d
+          description: 'Maximum acceptable age of the oldest known vendor timestamp for an applicable advisory.'
+        - macro: '{$DNF.SECURITY.CRITICAL.MIN}'
+          value: '1'
+          description: 'Minimum number of Critical advisories that raises a Disaster problem.'
+        - macro: '{$DNF.SECURITY.IMPORTANT.MIN}'
+          value: '1'
+          description: 'Minimum number of Important advisories that raises a High problem when no Critical threshold is met.'
+        - macro: '{$DNF.SECURITY.UNKNOWN.MAX}'
+          value: '0'
+          description: 'Maximum accepted number of advisories or affected package updates with Unknown severity.'
         - macro: '{$DNF.UPDATE.INTERVAL}'
           value: 15m
           description: 'Interval between complete DNF collections.'
@@ -467,6 +1318,912 @@ zabbix_export:
               newvalue: 'Yes'
         - uuid: 9feda965a52f4e8daf26c1392597e48f
           name: 'DNF: Update result'
+          mappings:
+            - value: '0'
+              newvalue: 'Not recorded'
+            - value: '1'
+              newvalue: 'Success'
+            - value: '2'
+              newvalue: 'Failed'
+    - uuid: c0ad58635b144642908149b5a986410c
+      template: 'APT by Zabbix agent 2'
+      name: 'APT by Zabbix agent 2'
+      description: |
+        Monitors configured APT repositories, available package updates, security classification, cached-index age, reboot status, and package update history through the Zabbix DNF Plugin for Agent 2.
+
+        The plugin reads existing local APT indexes and never refreshes them. The "other" category means an update was not positively identified as official security; it is not proof that the update has no security impact.
+      groups:
+        - name: 'Templates/Operating systems'
+      items:
+        - uuid: 23281288c64c4f839e489a0a183c49d7
+          name: 'APT: Get update data'
+          type: ZABBIX_PASSIVE
+          key: packages.get
+          delay: '{$APT.UPDATE.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Collects the complete package, repository, security-classification, cached-index, reboot, and update-history payload. The plugin reads existing APT metadata and does not refresh it. The raw JSON is not retained because dependent items extract the monitored values.'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+            - tag: component
+              value: updates
+        - uuid: 99fdfc918cfa49ffa97fa0e79135f542
+          name: 'APT: Collection complete'
+          type: DEPENDENT
+          key: apt.collection.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether the plugin completed every required APT and dpkg query. Failed collections make the master item unsupported and are also detected by the no-data condition.'
+          valuemap:
+            name: 'APT: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 66f13d9fbc714cefb1a839d4704b0d28
+              expression: 'last(/APT by Zabbix agent 2/apt.collection.complete)=0 or nodata(/APT by Zabbix agent 2/apt.collection.complete,{$APT.NODATA.TIME})=1'
+              name: 'APT: Collection is unavailable'
+              opdata: 'Last collection status: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'APT update data is stale or unavailable until collection succeeds.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: availability
+        - uuid: 2818ca61e68147e58ce797109a98cd6f
+          name: 'APT: Collection duration'
+          type: DEPENDENT
+          key: apt.collection.duration
+          value_type: FLOAT
+          units: s
+          description: 'Time spent collecting the complete APT payload, in seconds.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.duration_ms
+            - type: MULTIPLIER
+              parameters:
+                - '0.001'
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 3825f57424e24eaf977c0fe7fa9e4eed
+              expression: 'avg(/APT by Zabbix agent 2/apt.collection.duration,30m)>{$APT.COLLECTION.DURATION.MAX}'
+              name: 'APT: Collection is slow'
+              opdata: 'Collection duration: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The average collection duration is approaching the hard plugin and item timeout. Check local APT index and policy performance.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: performance
+        - uuid: abf90ed8c8ba4ebd843b84ecb110621b
+          name: 'APT: Updates pending total'
+          type: DEPENDENT
+          key: apt.updates
+          value_type: UNSIGNED
+          description: 'Total number of available package updates across all enabled repositories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.updates
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 9563391909e9467c93d315ba32a1ce4b
+          name: 'APT: Enabled repositories'
+          type: DEPENDENT
+          key: apt.repositories
+          value_type: UNSIGNED
+          description: 'Number of configured APT binary repositories represented by the local package indexes.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.repositories
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: d9159b2e72164aeb8a6b2f086c2a16d8
+          name: 'APT: Updates pending'
+          type: DEPENDENT
+          key: apt.updates.pending
+          value_type: UNSIGNED
+          description: 'Indicates whether one or more package updates are available.'
+          valuemap:
+            name: 'APT: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.updates_pending
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 79872a3dd1654043bd6938430d4a1086
+          name: 'APT: Reboot pending'
+          type: DEPENDENT
+          key: apt.reboot.pending
+          value_type: UNSIGNED
+          description: 'Indicates whether /run/reboot-required reports that the host must be rebooted.'
+          valuemap:
+            name: 'APT: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.reboot_pending
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 9790bf1a61a64bfab5efe5d882d2b1aa
+              expression: 'last(/APT by Zabbix agent 2/apt.reboot.pending)=1'
+              name: 'APT: Reboot is required'
+              opdata: 'Reboot pending: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'A reboot is required to complete package updates.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: maintenance
+        - uuid: 287b2acdaa4b49d49684679af1dd3c18
+          name: 'APT: Updates pending security'
+          type: DEPENDENT
+          key: apt.updates.security
+          value_type: UNSIGNED
+          description: 'Number of available package updates positively identified from trusted official Debian, Ubuntu, or Ubuntu ESM security pockets.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'APT security classification is incomplete';
+                  }
+                  return data.summary.update_types.security;
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: af7cacc5134e451c9594415403c8f3d9
+              expression: 'last(/APT by Zabbix agent 2/apt.updates.security)>={$APT.SECURITY.MIN}'
+              name: 'APT: Security updates are available'
+              opdata: 'Security updates: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'One or more security updates are available.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: security
+        - uuid: eb1de75c21ee4962a81a3f7440295f6b
+          name: 'APT: Updates pending other'
+          type: DEPENDENT
+          key: apt.updates.other
+          value_type: UNSIGNED
+          description: 'Number of available updates not positively identified as trusted official security updates. "Other" is not proof that an update has no security impact.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'APT security classification is incomplete';
+                  }
+                  return data.summary.update_types.other;
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: e1bc62499b3843ebba53e28799f2a605
+          name: 'APT: Last update result'
+          type: DEPENDENT
+          key: apt.last_update.result
+          value_type: UNSIGNED
+          history: 7d
+          trends: '0'
+          description: 'Best-effort result from retained APT history for the most recent completed package upgrade: 0 means not recorded, 1 means success, and 2 means failed.'
+          valuemap:
+            name: 'APT: Update result'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  var results = {
+                    not_recorded: 0,
+                    success: 1,
+                    failed: 2
+                  };
+                  var result = data.summary.last_update.result;
+
+                  if (!Object.prototype.hasOwnProperty.call(results, result)) {
+                    throw 'Unsupported last update result: ' + result;
+                  }
+
+                  return results[result];
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 91698bd14718458bbb53f93dab9ac954
+          name: 'APT: Last update time'
+          type: DEPENDENT
+          key: apt.last_update.timestamp
+          value_type: UNSIGNED
+          units: unixtime
+          trends: '0'
+          description: 'Best-effort Unix timestamp from retained APT history for the most recent completed package upgrade. No value is stored when no such transaction is recorded.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (data.summary.last_update.timestamp === null) {
+                    return null;
+                  }
+
+                  var timestamp = Date.parse(data.summary.last_update.timestamp);
+                  if (isNaN(timestamp)) {
+                    throw 'Invalid last update timestamp';
+                  }
+
+                  return Math.floor(timestamp / 1000);
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 3ac1a0b025084e99af2e600020e1de49
+          name: 'APT: Package metadata refreshed'
+          type: DEPENDENT
+          key: apt.metadata.refreshed
+          value_type: UNSIGNED
+          units: unixtime
+          trends: '0'
+          description: 'Unix timestamp of the oldest local APT binary index used by the collection. The plugin reports cached metadata and never refreshes it.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.metadata || data.metadata.refreshed_at === null) {
+                    return null;
+                  }
+
+                  var timestamp = Date.parse(data.metadata.refreshed_at);
+                  if (isNaN(timestamp)) {
+                    throw 'Invalid APT metadata timestamp';
+                  }
+
+                  return Math.floor(timestamp / 1000);
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: metadata
+        - uuid: fc941ca706f041f7a04f5a83582e321a
+          name: 'APT: Package metadata age'
+          type: DEPENDENT
+          key: apt.metadata.age
+          value_type: UNSIGNED
+          units: s
+          description: 'Age of the oldest local APT binary index used by the collection. Run apt-get update outside the plugin according to local policy when this value is too high.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.metadata.age_seconds
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: metadata
+          triggers:
+            - uuid: 132587a2e3424dcf88fe7e5c8417a1c1
+              expression: 'last(/APT by Zabbix agent 2/apt.metadata.age)>{$APT.METADATA.AGE.MAX}'
+              name: 'APT: Package metadata is stale'
+              opdata: 'Oldest package index age: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The cached APT package indexes are older than the configured threshold. The plugin does not refresh package metadata.'
+              tags:
+                - tag: component
+                  value: metadata
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: f3fe964bdb8341d2a09009a4880eaa1c
+          name: 'APT: Repository discovery'
+          type: DEPENDENT
+          key: apt.repository
+          delay: '0'
+          lifetime_type: DELETE_AFTER
+          lifetime: 30d
+          enabled_lifetime_type: DISABLE_IMMEDIATELY
+          enabled_lifetime: '0'
+          description: 'Discovers configured APT binary repositories represented by local indexes. Items for repositories that disappear are disabled immediately and retained for 30 days before deletion.'
+          item_prototypes:
+            - uuid: 82e4621eff9e44b7a144c5ffc32418c9
+              name: 'APT: Repository [{#REPO_NAME}]: Available update count'
+              type: DEPENDENT
+              key: 'apt.repository.updates["{#REPO_ID}"]'
+              delay: '0'
+              value_type: UNSIGNED
+              description: 'Number of available package updates from repository {#REPO_NAME} ({#REPO_ID}).'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.repositories[?(@.id == "{#REPO_ID}")].update_count.first()'
+              master_item:
+                key: packages.get
+              tags:
+                - tag: component
+                  value: updates
+                - tag: repository
+                  value: '{#REPO_ID}'
+                - tag: repository_name
+                  value: '{#REPO_NAME}'
+            - uuid: 768cb3b7e927403e85d45c6145b89070
+              name: 'APT: Repository [{#REPO_NAME}]: Pending package details'
+              type: DEPENDENT
+              key: 'apt.repository.update.details["{#REPO_ID}"]'
+              delay: '0'
+              history: 1d
+              value_type: TEXT
+              trends: '0'
+              description: 'Comma-separated Debian package identifiers (name:architecture=full-version) for updates from repository {#REPO_NAME} ({#REPO_ID}). The value is blank when there are no pending packages.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.updates[?(@.repository_id == "{#REPO_ID}")]'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '[]'
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var updates = JSON.parse(value);
+                      var packages = [];
+
+                      for (var i = 0; i < updates.length; i++) {
+                        var identifier = updates[i].identifier;
+                        if (typeof identifier !== 'string' || identifier.length === 0) {
+                          throw 'APT update is missing its package identifier';
+                        }
+
+                        if (packages.indexOf(identifier) === -1) {
+                          packages.push(identifier);
+                        }
+                      }
+
+                      return packages.join(', ');
+              master_item:
+                key: packages.get
+              tags:
+                - tag: component
+                  value: updates
+                - tag: repository
+                  value: '{#REPO_ID}'
+                - tag: repository_name
+                  value: '{#REPO_NAME}'
+          master_item:
+            key: packages.get
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.repositories
+          lld_macro_paths:
+            - lld_macro: '{#REPO_ID}'
+              path: $.id
+            - lld_macro: '{#REPO_NAME}'
+              path: $.name
+      macros:
+        - macro: '{$APT.COLLECTION.DURATION.MAX}'
+          value: '20'
+          description: 'Maximum acceptable average collection duration, in seconds.'
+        - macro: '{$APT.METADATA.AGE.MAX}'
+          value: 2d
+          description: 'Maximum acceptable age of the oldest local APT binary index.'
+        - macro: '{$APT.NODATA.TIME}'
+          value: 30m
+          description: 'Time without a successful collection before an availability problem is raised.'
+        - macro: '{$APT.SECURITY.MIN}'
+          value: '1'
+          description: 'Minimum number of security updates that raises a problem.'
+        - macro: '{$APT.UPDATE.INTERVAL}'
+          value: 15m
+          description: 'Interval between complete APT collections.'
+      valuemaps:
+        - uuid: 161779a2522f4c53b24ebf95fe523337
+          name: 'APT: No/Yes'
+          mappings:
+            - value: '0'
+              newvalue: 'No'
+            - value: '1'
+              newvalue: 'Yes'
+        - uuid: b00820ee6d6a4e11be15a6f9e3513d97
+          name: 'APT: Update result'
+          mappings:
+            - value: '0'
+              newvalue: 'Not recorded'
+            - value: '1'
+              newvalue: 'Success'
+            - value: '2'
+              newvalue: 'Failed'
+    - uuid: e19df8d4b3814e629fe0dd957720860b
+      template: 'APT by Zabbix agent 2 active'
+      name: 'APT by Zabbix agent 2 active'
+      description: |
+        Monitors configured APT repositories, available package updates, security classification, cached-index age, reboot status, and package update history through the Zabbix DNF Plugin for Agent 2.
+
+        The plugin reads existing local APT indexes and never refreshes them. The "other" category means an update was not positively identified as official security; it is not proof that the update has no security impact.
+      groups:
+        - name: 'Templates/Operating systems'
+      items:
+        - uuid: b4bdb1facba64143af31aa602d35c93b
+          name: 'APT: Get update data'
+          type: ZABBIX_ACTIVE
+          key: packages.get
+          delay: '{$APT.UPDATE.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Collects the complete package, repository, security-classification, cached-index, reboot, and update-history payload. The plugin reads existing APT metadata and does not refresh it. The raw JSON is not retained because dependent items extract the monitored values.'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+            - tag: component
+              value: updates
+        - uuid: 7dd2fe3c199a43069d98bd28006fbf0c
+          name: 'APT: Collection complete'
+          type: DEPENDENT
+          key: apt.collection.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether the plugin completed every required APT and dpkg query. Failed collections make the master item unsupported and are also detected by the no-data condition.'
+          valuemap:
+            name: 'APT: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 6ab23d5c7a794f0daaec85895b9ae759
+              expression: 'last(/APT by Zabbix agent 2 active/apt.collection.complete)=0 or nodata(/APT by Zabbix agent 2 active/apt.collection.complete,{$APT.NODATA.TIME})=1'
+              name: 'APT: Collection is unavailable'
+              opdata: 'Last collection status: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'APT update data is stale or unavailable until collection succeeds.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: availability
+        - uuid: 30864c1c704c43c5b9e1f5612cd7d99c
+          name: 'APT: Collection duration'
+          type: DEPENDENT
+          key: apt.collection.duration
+          value_type: FLOAT
+          units: s
+          description: 'Time spent collecting the complete APT payload, in seconds.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.duration_ms
+            - type: MULTIPLIER
+              parameters:
+                - '0.001'
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 2d343c7ef79847b08097f284035657da
+              expression: 'avg(/APT by Zabbix agent 2 active/apt.collection.duration,30m)>{$APT.COLLECTION.DURATION.MAX}'
+              name: 'APT: Collection is slow'
+              opdata: 'Collection duration: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The average collection duration is approaching the hard plugin and item timeout. Check local APT index and policy performance.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: performance
+        - uuid: 468c6c8feb1644ce9ec359529da61028
+          name: 'APT: Updates pending total'
+          type: DEPENDENT
+          key: apt.updates
+          value_type: UNSIGNED
+          description: 'Total number of available package updates across all enabled repositories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.updates
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 916c1bf6f1c2462b93a31507e07afaf6
+          name: 'APT: Enabled repositories'
+          type: DEPENDENT
+          key: apt.repositories
+          value_type: UNSIGNED
+          description: 'Number of configured APT binary repositories represented by the local package indexes.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.repositories
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: b477172d643d4a7bbe6b3cfbb0dde70b
+          name: 'APT: Updates pending'
+          type: DEPENDENT
+          key: apt.updates.pending
+          value_type: UNSIGNED
+          description: 'Indicates whether one or more package updates are available.'
+          valuemap:
+            name: 'APT: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.updates_pending
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 6f1a61bf1e5343c8aee1261a7824c43c
+          name: 'APT: Reboot pending'
+          type: DEPENDENT
+          key: apt.reboot.pending
+          value_type: UNSIGNED
+          description: 'Indicates whether /run/reboot-required reports that the host must be rebooted.'
+          valuemap:
+            name: 'APT: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.reboot_pending
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 9739bd4e2f30419096f0b0837f1b4e92
+              expression: 'last(/APT by Zabbix agent 2 active/apt.reboot.pending)=1'
+              name: 'APT: Reboot is required'
+              opdata: 'Reboot pending: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'A reboot is required to complete package updates.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: maintenance
+        - uuid: c365e01fdace4b828124b7fd5d9b7ab4
+          name: 'APT: Updates pending security'
+          type: DEPENDENT
+          key: apt.updates.security
+          value_type: UNSIGNED
+          description: 'Number of available package updates positively identified from trusted official Debian, Ubuntu, or Ubuntu ESM security pockets.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'APT security classification is incomplete';
+                  }
+                  return data.summary.update_types.security;
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: bda003a0b2f5493d9d775258591c2894
+              expression: 'last(/APT by Zabbix agent 2 active/apt.updates.security)>={$APT.SECURITY.MIN}'
+              name: 'APT: Security updates are available'
+              opdata: 'Security updates: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'One or more security updates are available.'
+              tags:
+                - tag: component
+                  value: updates
+                - tag: scope
+                  value: security
+        - uuid: bd9d284532d34cb48f7b4d15db37237d
+          name: 'APT: Updates pending other'
+          type: DEPENDENT
+          key: apt.updates.other
+          value_type: UNSIGNED
+          description: 'Number of available updates not positively identified as trusted official security updates. "Other" is not proof that an update has no security impact.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.classification || data.classification.complete !== true) {
+                    throw 'APT security classification is incomplete';
+                  }
+                  return data.summary.update_types.other;
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: e6b8424f2e6f4436b74812785cf2c973
+          name: 'APT: Last update result'
+          type: DEPENDENT
+          key: apt.last_update.result
+          value_type: UNSIGNED
+          history: 7d
+          trends: '0'
+          description: 'Best-effort result from retained APT history for the most recent completed package upgrade: 0 means not recorded, 1 means success, and 2 means failed.'
+          valuemap:
+            name: 'APT: Update result'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  var results = {
+                    not_recorded: 0,
+                    success: 1,
+                    failed: 2
+                  };
+                  var result = data.summary.last_update.result;
+
+                  if (!Object.prototype.hasOwnProperty.call(results, result)) {
+                    throw 'Unsupported last update result: ' + result;
+                  }
+
+                  return results[result];
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 47391f585b7a499083324b7f07a5e1fb
+          name: 'APT: Last update time'
+          type: DEPENDENT
+          key: apt.last_update.timestamp
+          value_type: UNSIGNED
+          units: unixtime
+          trends: '0'
+          description: 'Best-effort Unix timestamp from retained APT history for the most recent completed package upgrade. No value is stored when no such transaction is recorded.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (data.summary.last_update.timestamp === null) {
+                    return null;
+                  }
+
+                  var timestamp = Date.parse(data.summary.last_update.timestamp);
+                  if (isNaN(timestamp)) {
+                    throw 'Invalid last update timestamp';
+                  }
+
+                  return Math.floor(timestamp / 1000);
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 351a7effd68648adb86f95f694683f74
+          name: 'APT: Package metadata refreshed'
+          type: DEPENDENT
+          key: apt.metadata.refreshed
+          value_type: UNSIGNED
+          units: unixtime
+          trends: '0'
+          description: 'Unix timestamp of the oldest local APT binary index used by the collection. The plugin reports cached metadata and never refreshes it.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  if (!data.metadata || data.metadata.refreshed_at === null) {
+                    return null;
+                  }
+
+                  var timestamp = Date.parse(data.metadata.refreshed_at);
+                  if (isNaN(timestamp)) {
+                    throw 'Invalid APT metadata timestamp';
+                  }
+
+                  return Math.floor(timestamp / 1000);
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: metadata
+        - uuid: b3f71efea6494fa8a797590d96ddfb8f
+          name: 'APT: Package metadata age'
+          type: DEPENDENT
+          key: apt.metadata.age
+          value_type: UNSIGNED
+          units: s
+          description: 'Age of the oldest local APT binary index used by the collection. Run apt-get update outside the plugin according to local policy when this value is too high.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.metadata.age_seconds
+          master_item:
+            key: packages.get
+          tags:
+            - tag: component
+              value: metadata
+          triggers:
+            - uuid: 6e072688cbbb488ea224353041dd6206
+              expression: 'last(/APT by Zabbix agent 2 active/apt.metadata.age)>{$APT.METADATA.AGE.MAX}'
+              name: 'APT: Package metadata is stale'
+              opdata: 'Oldest package index age: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The cached APT package indexes are older than the configured threshold. The plugin does not refresh package metadata.'
+              tags:
+                - tag: component
+                  value: metadata
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: 54ed4cf49cbe40d5a3f8cd57bc2c2625
+          name: 'APT: Repository discovery'
+          type: DEPENDENT
+          key: apt.repository
+          delay: '0'
+          lifetime_type: DELETE_AFTER
+          lifetime: 30d
+          enabled_lifetime_type: DISABLE_IMMEDIATELY
+          enabled_lifetime: '0'
+          description: 'Discovers configured APT binary repositories represented by local indexes. Items for repositories that disappear are disabled immediately and retained for 30 days before deletion.'
+          item_prototypes:
+            - uuid: 3affad6f9e244973a061a5dd58a6db1b
+              name: 'APT: Repository [{#REPO_NAME}]: Available update count'
+              type: DEPENDENT
+              key: 'apt.repository.updates["{#REPO_ID}"]'
+              delay: '0'
+              value_type: UNSIGNED
+              description: 'Number of available package updates from repository {#REPO_NAME} ({#REPO_ID}).'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.repositories[?(@.id == "{#REPO_ID}")].update_count.first()'
+              master_item:
+                key: packages.get
+              tags:
+                - tag: component
+                  value: updates
+                - tag: repository
+                  value: '{#REPO_ID}'
+                - tag: repository_name
+                  value: '{#REPO_NAME}'
+            - uuid: 1f1642799e724620b5d7f72aa02cce61
+              name: 'APT: Repository [{#REPO_NAME}]: Pending package details'
+              type: DEPENDENT
+              key: 'apt.repository.update.details["{#REPO_ID}"]'
+              delay: '0'
+              history: 1d
+              value_type: TEXT
+              trends: '0'
+              description: 'Comma-separated Debian package identifiers (name:architecture=full-version) for updates from repository {#REPO_NAME} ({#REPO_ID}). The value is blank when there are no pending packages.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.updates[?(@.repository_id == "{#REPO_ID}")]'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '[]'
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var updates = JSON.parse(value);
+                      var packages = [];
+
+                      for (var i = 0; i < updates.length; i++) {
+                        var identifier = updates[i].identifier;
+                        if (typeof identifier !== 'string' || identifier.length === 0) {
+                          throw 'APT update is missing its package identifier';
+                        }
+
+                        if (packages.indexOf(identifier) === -1) {
+                          packages.push(identifier);
+                        }
+                      }
+
+                      return packages.join(', ');
+              master_item:
+                key: packages.get
+              tags:
+                - tag: component
+                  value: updates
+                - tag: repository
+                  value: '{#REPO_ID}'
+                - tag: repository_name
+                  value: '{#REPO_NAME}'
+          master_item:
+            key: packages.get
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.repositories
+          lld_macro_paths:
+            - lld_macro: '{#REPO_ID}'
+              path: $.id
+            - lld_macro: '{#REPO_NAME}'
+              path: $.name
+      macros:
+        - macro: '{$APT.COLLECTION.DURATION.MAX}'
+          value: '20'
+          description: 'Maximum acceptable average collection duration, in seconds.'
+        - macro: '{$APT.METADATA.AGE.MAX}'
+          value: 2d
+          description: 'Maximum acceptable age of the oldest local APT binary index.'
+        - macro: '{$APT.NODATA.TIME}'
+          value: 30m
+          description: 'Time without a successful collection before an availability problem is raised.'
+        - macro: '{$APT.SECURITY.MIN}'
+          value: '1'
+          description: 'Minimum number of security updates that raises a problem.'
+        - macro: '{$APT.UPDATE.INTERVAL}'
+          value: 15m
+          description: 'Interval between complete APT collections.'
+      valuemaps:
+        - uuid: 1ad4ae6d15764810a64664a30fa5b3af
+          name: 'APT: No/Yes'
+          mappings:
+            - value: '0'
+              newvalue: 'No'
+            - value: '1'
+              newvalue: 'Yes'
+        - uuid: d6ebf61e9c2644f78e6e5b2da03ca2c9
+          name: 'APT: Update result'
           mappings:
             - value: '0'
               newvalue: 'Not recorded'
@@ -499,6 +2256,608 @@ zabbix_export:
               value: raw
             - tag: component
               value: updates
+        - uuid: 9d4539938b634b2fa8c2a8edd8e14cd8
+          name: 'DNF: Get advisory data'
+          type: ZABBIX_ACTIVE
+          key: dnf.advisories.get
+          delay: '{$DNF.ADVISORY.UPDATE.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Collects applicable DNF security advisories independently from package-update monitoring. DNF4 intentionally returns compact relationship data, while DNF5 can return complete titles, CVEs, and issue dates.'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+            - tag: component
+              value: security
+        - uuid: da4ef166a5714a009543803cb1fb0b5f
+          name: 'DNF: Advisory discovery data'
+          type: DEPENDENT
+          key: dnf.advisory.discovery.data
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Validates the complete advisory payload and severity-selection macros, then projects the compact records shared by advisory discovery and its dependent item prototypes. The default macro values produce an empty array. Invalid or incomplete input makes this item unsupported instead of falsely marking discovered advisories absent.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  var selections = {
+                    critical: '{$DNF.ADVISORY.LLD.CRITICAL}',
+                    important: '{$DNF.ADVISORY.LLD.IMPORTANT}',
+                    moderate: '{$DNF.ADVISORY.LLD.MODERATE}',
+                    low: '{$DNF.ADVISORY.LLD.LOW}',
+                    unknown: '{$DNF.ADVISORY.LLD.UNKNOWN}'
+                  };
+
+                  for (var selectedSeverity in selections) {
+                    if (Object.prototype.hasOwnProperty.call(selections, selectedSeverity) &&
+                        selections[selectedSeverity] !== '0' && selections[selectedSeverity] !== '1') {
+                      throw 'Advisory discovery macro for ' + selectedSeverity + ' must be exactly 0 or 1';
+                    }
+                  }
+
+                  if (!data || typeof data !== 'object' || Array.isArray(data) || data.schema_version !== 1) {
+                    throw 'Advisory discovery requires schema version 1';
+                  }
+                  if (!data.collection || data.collection.complete !== true) {
+                    throw 'Advisory discovery requires a complete collection';
+                  }
+                  if (!data.metadata || data.metadata.details_complete !== true ||
+                      data.metadata.cves_complete !== true || data.metadata.issue_dates_complete !== true) {
+                    throw 'Advisory discovery requires complete detail, CVE, and issue-date metadata';
+                  }
+                  if (!Array.isArray(data.advisories) || !data.summary ||
+                      data.summary.advisories !== data.advisories.length) {
+                    throw 'Advisory discovery payload count is inconsistent';
+                  }
+
+                  function safeIdentifier(id) {
+                    if (typeof id !== 'string' || id.length === 0) {
+                      throw 'Advisory discovery record has an invalid ID';
+                    }
+                    if (id.length > 256) {
+                      throw 'Advisory discovery ID exceeds 256 UTF-16 code units';
+                    }
+
+                    var encoded = 'a';
+                    for (var character = 0; character < id.length; character++) {
+                      var hex = id.charCodeAt(character).toString(16);
+                      while (hex.length < 4) {
+                        hex = '0' + hex;
+                      }
+                      encoded += hex;
+                    }
+                    return encoded;
+                  }
+
+                  function sortedStringArray(values, field, id) {
+                    if (!Array.isArray(values)) {
+                      throw 'Advisory ' + id + ' has an invalid ' + field + ' array';
+                    }
+
+                    var result = [];
+                    var seen = {};
+                    for (var index = 0; index < values.length; index++) {
+                      if (typeof values[index] !== 'string') {
+                        throw 'Advisory ' + id + ' has a non-string ' + field + ' value';
+                      }
+                      var seenKey = '$' + values[index];
+                      if (!Object.prototype.hasOwnProperty.call(seen, seenKey)) {
+                        seen[seenKey] = true;
+                        result.push(values[index]);
+                      }
+                    }
+                    result.sort();
+                    return result;
+                  }
+
+                  var records = [];
+                  var seenIDs = {};
+                  var seenSafeIDs = {};
+                  for (var advisoryIndex = 0; advisoryIndex < data.advisories.length; advisoryIndex++) {
+                    var advisory = data.advisories[advisoryIndex];
+                    if (!advisory || typeof advisory !== 'object' || Array.isArray(advisory)) {
+                      throw 'Advisory discovery record is not an object';
+                    }
+
+                    var id = advisory.id;
+                    var safeID = safeIdentifier(id);
+                    var seenIDKey = '$' + id;
+                    if (Object.prototype.hasOwnProperty.call(seenIDs, seenIDKey) ||
+                        Object.prototype.hasOwnProperty.call(seenSafeIDs, safeID)) {
+                      throw 'Advisory discovery record has a duplicate ID';
+                    }
+                    seenIDs[seenIDKey] = true;
+                    seenSafeIDs[safeID] = true;
+
+                    var severity = advisory.severity;
+                    if (!Object.prototype.hasOwnProperty.call(selections, severity)) {
+                      throw 'Advisory ' + id + ' has an invalid severity';
+                    }
+                    if (advisory.type !== 'security') {
+                      throw 'Advisory ' + id + ' is not a security advisory';
+                    }
+                    if (typeof advisory.title !== 'string' || advisory.title.length === 0) {
+                      throw 'Advisory ' + id + ' has an invalid title';
+                    }
+                    if (typeof advisory.issued_at !== 'string') {
+                      throw 'Advisory ' + id + ' has no complete issue timestamp';
+                    }
+
+                    var vendorTimestamp = Date.parse(advisory.issued_at);
+                    if (isNaN(vendorTimestamp) || vendorTimestamp < 0) {
+                      throw 'Advisory ' + id + ' has an invalid issue timestamp';
+                    }
+                    vendorTimestamp = Math.floor(vendorTimestamp / 1000);
+
+                    var packages = sortedStringArray(
+                      advisory.affected_update_nevras,
+                      'affected package',
+                      id
+                    );
+                    var cves = sortedStringArray(advisory.cve_ids, 'CVE', id);
+
+                    if (selections[severity] === '1') {
+                      records.push({
+                        safe_id: safeID,
+                        id: id,
+                        severity: severity,
+                        title: advisory.title,
+                        presence: 1,
+                        vendor_timestamp: vendorTimestamp,
+                        affected_package_count: packages.length,
+                        affected_packages: JSON.stringify(packages),
+                        cves: JSON.stringify(cves)
+                      });
+                    }
+                  }
+
+                  records.sort(function (left, right) {
+                    if (left.safe_id < right.safe_id) {
+                      return -1;
+                    }
+                    if (left.safe_id > right.safe_id) {
+                      return 1;
+                    }
+                    return 0;
+                  });
+                  return JSON.stringify(records);
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 1c5327f4c4f84377840cdf7138053d3f
+          name: 'DNF: Advisory collection complete'
+          type: DEPENDENT
+          key: dnf.advisory.collection.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether the independent advisory collection completed successfully. Command or parser failures make the master item unsupported and are detected by the no-data condition.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: 2c7047372eb742b59a79ac9fadaa3cec
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.advisory.collection.complete)=0 or nodata(/DNF by Zabbix agent 2 active/dnf.advisory.collection.complete,{$DNF.ADVISORY.NODATA.TIME})=1'
+              name: 'DNF: Advisory collection is unavailable'
+              opdata: 'Last advisory collection status: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'DNF advisory data is stale or unavailable. Package-update monitoring remains independent.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: availability
+        - uuid: 2035c55dfa8e4149bd267bade00d0119
+          name: 'DNF: Advisory collection duration'
+          type: DEPENDENT
+          key: dnf.advisory.collection.duration
+          value_type: FLOAT
+          units: s
+          description: 'Time spent collecting the independent advisory payload, in seconds.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collection.duration_ms
+            - type: MULTIPLIER
+              parameters:
+                - '0.001'
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 2bc44de90ed6439e86e75420536e0210
+          name: 'DNF: Advisory details complete'
+          type: DEPENDENT
+          key: dnf.advisory.details.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether titles and detail relationships are complete. This is normally false on DNF4 because its bounded strategy omits the bulk detail command.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.metadata.details_complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: cfaae5ee04d746feb6db70904d95f579
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.advisory.details.complete)=0 or last(/DNF by Zabbix agent 2 active/dnf.advisory.cves.complete)=0 or last(/DNF by Zabbix agent 2 active/dnf.advisory.issue_dates.complete)=0'
+              name: 'DNF: Advisory metadata is incomplete'
+              opdata: 'Details: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'One or more advisory detail, CVE, or issue-date capabilities are incomplete. DNF4 reports this by design; known compact advisory and package relationships remain usable.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: notice
+        - uuid: e9254fd8fbe04930908a71ea8e0372d9
+          name: 'DNF: Advisory CVEs complete'
+          type: DEPENDENT
+          key: dnf.advisory.cves.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether the unique CVE count is authoritative. A false value means the reported CVEs are known data, not proof that other CVEs do not apply.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.metadata.cves_complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: d427c1b617de486496b5cc0556e3c6bb
+          name: 'DNF: Advisory issue dates complete'
+          type: DEPENDENT
+          key: dnf.advisory.issue_dates.complete
+          value_type: UNSIGNED
+          description: 'Indicates whether true vendor issue dates are complete. DNF4 normally exposes only Updated timestamps when detail is available and therefore cannot claim this capability.'
+          valuemap:
+            name: 'DNF: No/Yes'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.metadata.issue_dates_complete
+            - type: BOOL_TO_DECIMAL
+              parameters: []
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 1a1ca55159154ee0b97df1bd62b5027b
+          name: 'DNF: Security advisories total'
+          type: DEPENDENT
+          key: dnf.advisory.total
+          value_type: UNSIGNED
+          description: 'Number of unique applicable security advisory IDs.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: e830876e80234c4e987971b84c7c06ba
+          name: 'DNF: Unique known CVEs'
+          type: DEPENDENT
+          key: dnf.advisory.cves
+          value_type: UNSIGNED
+          description: 'Number of unique known CVE IDs. This count is authoritative only when the advisory CVE completeness item is Yes.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.unique_cves
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 0ccdf3f3d6be44f5859d717d4f011005
+          name: 'DNF: Security advisories critical'
+          type: DEPENDENT
+          key: dnf.advisory.critical
+          value_type: UNSIGNED
+          description: 'Number of unique applicable Critical security advisories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.critical
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: c51118e2865649799331bc236ae85c2e
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.advisory.critical)>={$DNF.SECURITY.CRITICAL.MIN}'
+              name: 'DNF: Critical security advisories are applicable'
+              opdata: 'Critical advisories: {ITEM.LASTVALUE1}'
+              priority: DISASTER
+              description: 'One or more Critical DNF security advisories apply to pending package updates.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+        - uuid: 99d635373b0a4c5aa9c2af2f8bcaccd8
+          name: 'DNF: Security advisories important'
+          type: DEPENDENT
+          key: dnf.advisory.important
+          value_type: UNSIGNED
+          description: 'Number of unique applicable Important security advisories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.important
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: d185651d059444baba86add8b9639f92
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.advisory.critical)<{$DNF.SECURITY.CRITICAL.MIN} and last(/DNF by Zabbix agent 2 active/dnf.advisory.important)>={$DNF.SECURITY.IMPORTANT.MIN}'
+              name: 'DNF: Important security advisories are applicable'
+              opdata: 'Important advisories: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Important DNF security advisories apply and the Critical threshold is not met, keeping the Critical and Important problems mutually exclusive.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+        - uuid: 5c1ae2d45c0c45e5aad6f31007cc99a7
+          name: 'DNF: Security advisories moderate'
+          type: DEPENDENT
+          key: dnf.advisory.moderate
+          value_type: UNSIGNED
+          description: 'Number of unique applicable Moderate security advisories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.moderate
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: de49996d953040d2a6c978ce9d4f07c8
+          name: 'DNF: Security advisories low'
+          type: DEPENDENT
+          key: dnf.advisory.low
+          value_type: UNSIGNED
+          description: 'Number of unique applicable Low security advisories.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.low
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: c4dea96198f84e728d993e587d2e6871
+          name: 'DNF: Security advisories unknown severity'
+          type: DEPENDENT
+          key: dnf.advisory.unknown
+          value_type: UNSIGNED
+          description: 'Number of unique applicable advisories whose vendor severity is absent or unrecognized.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.advisories_by_severity.unknown
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: 1e94dcad95d740a7a21856db94b134ae
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.advisory.unknown)>{$DNF.SECURITY.UNKNOWN.MAX} or last(/DNF by Zabbix agent 2 active/dnf.advisory.packages.unknown)>{$DNF.SECURITY.UNKNOWN.MAX}'
+              name: 'DNF: Security advisory severity is unknown'
+              opdata: 'Unknown advisories: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'The number of advisories or affected package updates with Unknown severity exceeds the configured maximum.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+        - uuid: 33d518ef6d2644d3b0096b37c0bdbe9e
+          name: 'DNF: Affected package updates critical'
+          type: DEPENDENT
+          key: dnf.advisory.packages.critical
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Critical.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.critical
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: 5d03221acf3642d8b03572def278d4e1
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.updates.security)>(last(/DNF by Zabbix agent 2 active/dnf.advisory.packages.critical)+last(/DNF by Zabbix agent 2 active/dnf.advisory.packages.important)+last(/DNF by Zabbix agent 2 active/dnf.advisory.packages.moderate)+last(/DNF by Zabbix agent 2 active/dnf.advisory.packages.low)+last(/DNF by Zabbix agent 2 active/dnf.advisory.packages.unknown))'
+              name: 'DNF: Security package updates lack advisory objects'
+              opdata: 'Security updates: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The package classifier reports more security updates than the advisory collector can link to advisory objects. Investigate metadata freshness or vendor relationship ambiguity.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: notice
+        - uuid: c9d446f080654765b40166f9366f4e96
+          name: 'DNF: Affected package updates important'
+          type: DEPENDENT
+          key: dnf.advisory.packages.important
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Important.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.important
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 406cb6baa287402ea796923e53e09edd
+          name: 'DNF: Affected package updates moderate'
+          type: DEPENDENT
+          key: dnf.advisory.packages.moderate
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Moderate.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.moderate
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 5f8081fd2c764457b8f8614219e1425a
+          name: 'DNF: Affected package updates low'
+          type: DEPENDENT
+          key: dnf.advisory.packages.low
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Low.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.low
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 6b2937d8f2ea4ef994f3ca7b5a631a0f
+          name: 'DNF: Affected package updates unknown severity'
+          type: DEPENDENT
+          key: dnf.advisory.packages.unknown
+          value_type: UNSIGNED
+          description: 'Number of unique pending package updates whose highest linked advisory severity is Unknown.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.package_updates_by_severity.unknown
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: 2b52da7557d245958dde05f5cad7f854
+          name: 'DNF: Oldest advisory vendor timestamp'
+          type: DEPENDENT
+          key: dnf.advisory.oldest.timestamp
+          value_type: UNSIGNED
+          units: unixtime
+          trends: '0'
+          description: 'Unix timestamp of the oldest preferred vendor timestamp. Issue dates are preferred; Updated is used only when an issue date is unavailable. No value is stored when no vendor timestamp is known.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var timestamp = JSON.parse(value).summary.oldest_vendor_timestamp;
+                  if (timestamp === null) {
+                    return null;
+                  }
+
+                  var milliseconds = Date.parse(timestamp);
+                  if (isNaN(milliseconds)) {
+                    throw 'Invalid oldest vendor timestamp';
+                  }
+
+                  return Math.floor(milliseconds / 1000);
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+        - uuid: e22d4e02664c45ed804bb86a4d475ea5
+          name: 'DNF: Oldest advisory vendor age'
+          type: DEPENDENT
+          key: dnf.advisory.oldest.age
+          value_type: UNSIGNED
+          units: s
+          description: 'Age of the oldest preferred vendor timestamp in seconds. Future vendor timestamps are reported by the plugin as age zero.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var age = JSON.parse(value).summary.oldest_vendor_age_seconds;
+                  if (age === null) {
+                    return null;
+                  }
+                  if (typeof age !== 'number' || age < 0 || !isFinite(age)) {
+                    throw 'Invalid oldest vendor age';
+                  }
+
+                  return Math.floor(age);
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
+          triggers:
+            - uuid: 2058dd13f32c487fabec33e3df42396f
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.advisory.oldest.age)>{$DNF.SECURITY.ADVISORY.MAX.AGE}'
+              name: 'DNF: Applicable security advisory is old'
+              opdata: 'Oldest vendor age: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The oldest known vendor timestamp for an applicable advisory exceeds the configured maximum age.'
+              tags:
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+        - uuid: 869e8678ab8f47dda05a51ecd26f6d74
+          name: 'DNF: Oldest advisory timestamp basis'
+          type: DEPENDENT
+          key: dnf.advisory.oldest.basis
+          value_type: CHAR
+          trends: '0'
+          description: 'Basis of the oldest vendor timestamp: issued, updated, or none.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.summary.oldest_vendor_timestamp_basis
+          master_item:
+            key: dnf.advisories.get
+          tags:
+            - tag: component
+              value: security
         - uuid: 1f91658bdd5f414e8f6f8c88867e8d5f
           name: 'DNF: Collection complete'
           type: DEPENDENT
@@ -911,7 +3270,244 @@ zabbix_export:
               path: $.id
             - lld_macro: '{#REPO_NAME}'
               path: $.name
+        - uuid: af3e0c704fbc4d7ba0685d5f08043df8
+          name: 'DNF: Advisory discovery'
+          type: DEPENDENT
+          key: dnf.advisory.discovery
+          delay: '0'
+          lifetime_type: DELETE_AFTER
+          lifetime: 30d
+          enabled_lifetime_type: DISABLE_AFTER
+          enabled_lifetime: 1d
+          description: 'Discovers only advisory severities explicitly enabled by the LLD macros. Lost advisory items remain enabled for one day so the presence value can become zero and recover the trigger, then remain disabled until deletion after 30 days. Invalid macros or incomplete metadata make discovery unsupported rather than returning a false empty list.'
+          item_prototypes:
+            - uuid: 68a4f86316854fb0be0cb45f043c321b
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: Presence'
+              type: DEPENDENT
+              key: 'dnf.advisory.presence[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 30d
+              value_type: UNSIGNED
+              trends: '0'
+              description: 'Indicates that advisory {#ADVISORY_ID} ({#ADVISORY_TITLE}) remains applicable. The value becomes zero on disappearance before the discovery lifecycle disables the item.'
+              valuemap:
+                name: 'DNF: No/Yes'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].presence.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+            - uuid: 95b5d77dcd3145bf8119f4e734206679
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: Vendor timestamp'
+              type: DEPENDENT
+              key: 'dnf.advisory.vendor.timestamp[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 30d
+              value_type: UNSIGNED
+              units: unixtime
+              trends: '0'
+              description: 'Preferred vendor issue timestamp for advisory {#ADVISORY_ID} ({#ADVISORY_TITLE}). Discovery requires complete issue-date metadata.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].vendor_timestamp.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+            - uuid: 112ae060d33348fea8c8c261d9429bba
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: Affected package count'
+              type: DEPENDENT
+              key: 'dnf.advisory.packages.count[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 30d
+              value_type: UNSIGNED
+              trends: '0'
+              description: 'Number of unique pending package NEVRAs affected by advisory {#ADVISORY_ID}.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].affected_package_count.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+            - uuid: ade0d29ca569497882b08e7a9e050eb9
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: Affected package list'
+              type: DEPENDENT
+              key: 'dnf.advisory.packages.list[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 7d
+              value_type: TEXT
+              trends: '0'
+              description: 'Deterministically sorted JSON array of pending package NEVRAs affected by advisory {#ADVISORY_ID}.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].affected_packages.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '[]'
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+            - uuid: e06a5f8c7a5a46e582bd18d38534ed30
+              name: 'DNF: Advisory [{#ADVISORY_ID}]: CVE list'
+              type: DEPENDENT
+              key: 'dnf.advisory.cves.list[{#ADVISORY_SAFE_ID}]'
+              delay: '0'
+              history: 7d
+              value_type: TEXT
+              trends: '0'
+              description: 'Deterministically sorted JSON array of known CVE IDs for advisory {#ADVISORY_ID}. Discovery requires complete CVE metadata.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.safe_id == "{#ADVISORY_SAFE_ID}")].cves.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '[]'
+              master_item:
+                key: dnf.advisory.discovery.data
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+          trigger_prototypes:
+            - uuid: aa781b59b08d42c594e925b20c0c60ec
+              expression: 'last(/DNF by Zabbix agent 2 active/dnf.advisory.presence[{#ADVISORY_SAFE_ID}])=1'
+              name: 'DNF: Advisory [{#ADVISORY_ID}] is applicable'
+              opdata: 'Severity: {#ADVISORY_SEVERITY}; title: {#ADVISORY_TITLE}'
+              priority: HIGH
+              description: 'Security advisory {#ADVISORY_ID} applies to one or more pending package updates. Severity is assigned by discovery override.'
+              tags:
+                - tag: advisory
+                  value: '{#ADVISORY_ID}'
+                - tag: component
+                  value: security
+                - tag: scope
+                  value: security
+                - tag: severity
+                  value: '{#ADVISORY_SEVERITY}'
+          master_item:
+            key: dnf.advisory.discovery.data
+          lld_macro_paths:
+            - lld_macro: '{#ADVISORY_ID}'
+              path: $.id
+            - lld_macro: '{#ADVISORY_SAFE_ID}'
+              path: $.safe_id
+            - lld_macro: '{#ADVISORY_SEVERITY}'
+              path: $.severity
+            - lld_macro: '{#ADVISORY_TITLE}'
+              path: $.title
+          overrides:
+            - name: 'Critical advisory trigger severity'
+              step: '1'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^critical$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: DISASTER
+            - name: 'Important advisory trigger severity'
+              step: '2'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^important$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: HIGH
+            - name: 'Moderate advisory trigger severity'
+              step: '3'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^moderate$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: WARNING
+            - name: 'Low advisory trigger severity'
+              step: '4'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^low$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: INFO
+            - name: 'Unknown advisory trigger severity'
+              step: '5'
+              filter:
+                conditions:
+                  - macro: '{#ADVISORY_SEVERITY}'
+                    value: '^unknown$'
+              operations:
+                - operationobject: TRIGGER_PROTOTYPE
+                  operator: REGEXP
+                  value: '^DNF: Advisory \['
+                  severity: HIGH
       macros:
+        - macro: '{$DNF.ADVISORY.NODATA.TIME}'
+          value: 2h
+          description: 'Time without a successful advisory collection before an availability problem is raised.'
+        - macro: '{$DNF.ADVISORY.LLD.CRITICAL}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Critical advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.LLD.IMPORTANT}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Important advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.LLD.LOW}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Low advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.LLD.MODERATE}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Moderate advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.LLD.UNKNOWN}'
+          value: '0'
+          description: 'Set to exactly 1 to discover per-advisory items and triggers for Unknown-severity advisories; 0 keeps this severity disabled.'
+        - macro: '{$DNF.ADVISORY.UPDATE.INTERVAL}'
+          value: 1h
+          description: 'Interval between independent DNF advisory collections.'
         - macro: '{$DNF.COLLECTION.DURATION.MAX}'
           value: '20'
           description: 'Maximum acceptable average collection duration, in seconds.'
@@ -924,6 +3520,18 @@ zabbix_export:
         - macro: '{$DNF.SECURITY.MIN}'
           value: '1'
           description: 'Minimum number of security updates that raises a problem.'
+        - macro: '{$DNF.SECURITY.ADVISORY.MAX.AGE}'
+          value: 7d
+          description: 'Maximum acceptable age of the oldest known vendor timestamp for an applicable advisory.'
+        - macro: '{$DNF.SECURITY.CRITICAL.MIN}'
+          value: '1'
+          description: 'Minimum number of Critical advisories that raises a Disaster problem.'
+        - macro: '{$DNF.SECURITY.IMPORTANT.MIN}'
+          value: '1'
+          description: 'Minimum number of Important advisories that raises a High problem when no Critical threshold is met.'
+        - macro: '{$DNF.SECURITY.UNKNOWN.MAX}'
+          value: '0'
+          description: 'Maximum accepted number of advisories or affected package updates with Unknown severity.'
         - macro: '{$DNF.UPDATE.INTERVAL}'
           value: 15m
           description: 'Interval between complete DNF collections.'

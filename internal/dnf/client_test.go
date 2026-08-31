@@ -10,7 +10,89 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/packageinfo"
 )
+
+func TestLegacyCollectionCommandContract(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{responses: []fakeResponse{
+		{stdout: []byte("repo id repo name\nbaseos BaseOS\n")},
+		{stdout: []byte("bash|0|5.2|1|x86_64|baseos\n")},
+		{stdout: []byte("bash|0|5.2|1|x86_64|baseos\n")},
+		{},
+		{},
+		{stdout: []byte("bash|50\n")},
+		{stdout: []byte("1.0.0-1.x86_64\n")},
+		{stdout: []byte("kernel-core|1.0.0-1.x86_64\n")},
+		{stdout: []byte("4.14.0\n")},
+		{stdout: []byte(" 7 | update -y | 2026-08-19 21:14 | Upgrade | 1\n")},
+		{stdout: []byte(
+			"Transaction ID : 7\n" +
+				"End time     : Wed Aug 19 21:14:08 2026 (1 seconds)\n" +
+				"Return-Code  : Success\n" +
+				"Packages Altered:\n" +
+				"    Upgrade  bash-5.2-1.x86_64\n",
+		)},
+	}}
+	client := &Client{
+		runner: runner,
+		path:   "/usr/bin/dnf",
+		rebootChecker: &RebootChecker{
+			runner: runner,
+			commands: RebootCommands{
+				RPM:   "/usr/bin/rpm",
+				Uname: "/usr/bin/uname",
+			},
+			bootTime: func() (int64, error) { return 100, nil },
+		},
+	}
+
+	snapshot, err := client.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	if snapshot.Backend != packageinfo.BackendDNF {
+		t.Fatalf("Collect().Backend = %s, want dnf", snapshot.Backend)
+	}
+	if len(snapshot.Repositories) != 1 || len(snapshot.Updates) != 1 {
+		t.Fatalf("Collect() snapshot = %#v, want one repository and update", snapshot)
+	}
+	if !snapshot.Capabilities.Classification.Security.Valid() ||
+		snapshot.Capabilities.MetadataAge != packageinfo.CapabilityUnsupported {
+		t.Fatalf("Collect().Capabilities = %#v, want DNF capabilities", snapshot.Capabilities)
+	}
+
+	want := []struct {
+		name string
+		args []string
+	}{
+		{"/usr/bin/dnf", []string{"--assumeno", "-q", "repolist"}},
+		{"/usr/bin/dnf", []string{"--assumeno", "-q", "--setopt=*.skip_if_unavailable=False", "repoquery", "--upgrades", "--latest-limit=1", "--queryformat", updateQueryFormat}},
+		{"/usr/bin/dnf", []string{"--assumeno", "-q", "--setopt=*.skip_if_unavailable=False", "repoquery", "--upgrades", "--security", "--latest-limit=1", "--queryformat", updateQueryFormat}},
+		{"/usr/bin/dnf", []string{"--assumeno", "-q", "--setopt=*.skip_if_unavailable=False", "repoquery", "--upgrades", "--bugfix", "--latest-limit=1", "--queryformat", updateQueryFormat}},
+		{"/usr/bin/dnf", []string{"--assumeno", "-q", "--setopt=*.skip_if_unavailable=False", "repoquery", "--upgrades", "--enhancement", "--latest-limit=1", "--queryformat", updateQueryFormat}},
+		{"/usr/bin/rpm", []string{"-qa", "--qf", rebootPackageQueryFormat}},
+		{"/usr/bin/uname", []string{"-r"}},
+		{"/usr/bin/rpm", []string{"-qa", "--qf", kernelQueryFormat, "kernel*"}},
+		{"/usr/bin/dnf", []string{"--assumeno", "--version"}},
+		{"/usr/bin/dnf", []string{"--assumeno", "-q", "history", "list"}},
+		{"/usr/bin/dnf", []string{"--assumeno", "-q", "history", "info", "7"}},
+	}
+
+	if len(runner.requests) != len(want) {
+		t.Fatalf("legacy collection ran %d commands, want %d", len(runner.requests), len(want))
+	}
+	for index, request := range runner.requests {
+		if request.Name != want[index].name || !slices.Equal(request.Args, want[index].args) {
+			t.Errorf("request[%d] = %q %q, want %q %q", index, request.Name, request.Args, want[index].name, want[index].args)
+		}
+		if request.Env["LC_ALL"] != "C" || request.Env["LANG"] != "C" {
+			t.Errorf("request[%d] locale = %#v, want C locale", index, request.Env)
+		}
+	}
+}
 
 func TestNewRequiresRunner(t *testing.T) {
 	t.Parallel()

@@ -36,6 +36,7 @@ func ParseUpdates(data []byte) ([]Update, error) {
 			Release:      fields[3],
 			Arch:         fields[4],
 			RepositoryID: fields[5],
+			Type:         UpdateTypeOther,
 		})
 	}
 

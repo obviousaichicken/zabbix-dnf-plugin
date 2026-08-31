@@ -1,0 +1,11 @@
+libssl3:
+  Installed: 3.0.2-0ubuntu1.26
+  Candidate: 3.0.2-0ubuntu1.29
+  Version table:
+     3.0.2-0ubuntu1.29 500
+        500 http://archive.ubuntu.com/ubuntu jammy-updates/main amd64 Packages
+        500 http://security.ubuntu.com/ubuntu jammy-security/main amd64 Packages
+ *** 3.0.2-0ubuntu1.26 100
+        100 /var/lib/dpkg/status
+     3.0.2-0ubuntu1 500
+        500 http://archive.ubuntu.com/ubuntu jammy/main amd64 Packages

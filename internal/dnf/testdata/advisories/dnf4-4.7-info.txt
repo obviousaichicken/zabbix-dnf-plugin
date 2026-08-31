@@ -1,0 +1,14 @@
+===============================================================================
+  Important: acl security update
+===============================================================================
+  Update ID: RLSA-2026:43420
+       Type: security
+    Updated: 2026-08-06 06:09:49
+       Bugs: 2490277 -
+           : 2490279 -
+       CVEs: CVE-2026-54369
+           : CVE-2026-54370
+Description: Access Control Lists security update.
+           : Wrapped continuation text is deliberately retained as a parser contract.
+   Severity: Important
+  Installed: false

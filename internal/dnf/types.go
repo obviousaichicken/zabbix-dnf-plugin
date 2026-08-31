@@ -2,10 +2,11 @@ package dnf
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
 
 	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/command"
+	"github.com/obviousaichicken/zabbix-dnf-plugin/internal/packageinfo"
 )
 
 // Runner executes DNF commands.
@@ -17,42 +18,29 @@ type Runner interface {
 }
 
 // Repository contains an enabled repository's ID and name.
-type Repository struct {
-	ID   string
-	Name string
-}
+type Repository = packageinfo.Repository
 
 // Update contains package update metadata.
-type Update struct {
-	Name         string
-	Epoch        string
-	Version      string
-	Release      string
-	Arch         string
-	RepositoryID string
-	Type         UpdateType
-}
+type Update = packageinfo.Update
 
 // UpdateType identifies an advisory category.
-type UpdateType uint8
+type UpdateType = packageinfo.UpdateType
 
 const (
-	UpdateTypeOther UpdateType = iota
-	UpdateTypeSecurity
-	UpdateTypeBugfix
-	UpdateTypeEnhancement
+	UpdateTypeUnknown     = packageinfo.UpdateTypeUnknown
+	UpdateTypeSecurity    = packageinfo.UpdateTypeSecurity
+	UpdateTypeBugfix      = packageinfo.UpdateTypeBugfix
+	UpdateTypeEnhancement = packageinfo.UpdateTypeEnhancement
+	UpdateTypeOther       = packageinfo.UpdateTypeOther
 )
 
 // LastUpdate describes the most recent completed transaction that upgraded a package.
-type LastUpdate struct {
-	Timestamp time.Time `json:"timestamp"`
-	Result    string    `json:"result"`
-}
+type LastUpdate = packageinfo.LastUpdate
 
 const (
-	LastUpdateResultSuccess     = "success"
-	LastUpdateResultFailed      = "failed"
-	LastUpdateResultNotRecorded = "not_recorded"
+	LastUpdateResultSuccess     = packageinfo.LastUpdateResultSuccess
+	LastUpdateResultFailed      = packageinfo.LastUpdateResultFailed
+	LastUpdateResultNotRecorded = packageinfo.LastUpdateResultNotRecorded
 )
 
 // CommandError represents a failed DNF command.
@@ -78,3 +66,25 @@ func (e *CommandError) Error() string {
 func (e *CommandError) Unwrap() error {
 	return e.Err
 }
+
+// Operation returns a bounded, safe DNF command description.
+func (e *CommandError) Operation() string {
+	return e.Command
+}
+
+// Status returns the process exit status, or -1 when no process exited.
+func (e *CommandError) Status() int {
+	return e.ExitStatus
+}
+
+// IsTimeout reports whether command execution exceeded its context deadline.
+func (e *CommandError) IsTimeout() bool {
+	return errors.Is(e.Err, context.DeadlineExceeded)
+}
+
+// IsCanceled reports whether command execution was canceled for another reason.
+func (e *CommandError) IsCanceled() bool {
+	return errors.Is(e.Err, context.Canceled)
+}
+
+var _ command.Failure = (*CommandError)(nil)

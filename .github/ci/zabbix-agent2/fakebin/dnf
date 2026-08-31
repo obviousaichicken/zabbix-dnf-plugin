@@ -24,6 +24,9 @@ case "$*" in
         ' 7 | update -y | 2026-08-19 21:14 | Upgrade | 1'
     fi
     ;;
+  *'updateinfo list --updates --security'*)
+    printf '%s\n' 'TEST-2026:1 Important/Sec. example-0:2.0-1.x86_64'
+    ;;
   *--security*|*--bugfix*|*--enhancement*)
     # The update intentionally has no advisory metadata and remains "other".
     exit 0

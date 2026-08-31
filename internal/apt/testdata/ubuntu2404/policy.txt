@@ -1,0 +1,21 @@
+libssl3t64:
+  Installed: 3.0.13-0ubuntu3.12
+  Candidate: 3.0.13-0ubuntu3.15
+  Version table:
+     3.0.13-0ubuntu3.15 500
+        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages
+        500 http://security.ubuntu.com/ubuntu noble-security/main amd64 Packages
+ *** 3.0.13-0ubuntu3.12 100
+        100 /var/lib/dpkg/status
+     3.0.13-0ubuntu3 500
+        500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages
+libproc2-0:
+  Installed: 2:4.0.4-4ubuntu3.2
+  Candidate: 2:4.0.4-4ubuntu3.3
+  Version table:
+     2:4.0.4-4ubuntu3.3 500
+        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages
+ *** 2:4.0.4-4ubuntu3.2 100
+        100 /var/lib/dpkg/status
+     2:4.0.4-4ubuntu3 500
+        500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages

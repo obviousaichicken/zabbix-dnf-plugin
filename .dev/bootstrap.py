@@ -20,6 +20,17 @@ TEMPLATE_PATH = os.getenv(
 )
 PASSIVE_TEMPLATE_NAME = "DNF by Zabbix agent 2"
 ACTIVE_TEMPLATE_NAME = "DNF by Zabbix agent 2 active"
+TEMPLATES = (
+    (
+        TEMPLATE_PATH,
+        (
+            PASSIVE_TEMPLATE_NAME,
+            ACTIVE_TEMPLATE_NAME,
+            "APT by Zabbix agent 2",
+            "APT by Zabbix agent 2 active",
+        ),
+    ),
+)
 HOST_GROUP_NAME = "DNF plugin lab"
 WAIT_TIMEOUT = int(os.getenv("ZBX_BOOTSTRAP_TIMEOUT", "180"))
 TEMPLATE_ONLY = os.getenv("ZBX_TEMPLATE_ONLY", "0") == "1"
@@ -92,8 +103,8 @@ def wait_for_api(api):
     )
 
 
-def import_template(api):
-    with open(TEMPLATE_PATH, encoding="utf-8") as template_file:
+def import_template(api, path, names):
+    with open(path, encoding="utf-8") as template_file:
         source = template_file.read()
 
     api.call(
@@ -133,10 +144,16 @@ def import_template(api):
             "source": source,
         },
     )
-    print(
-        "Imported templates: "
-        f"{PASSIVE_TEMPLATE_NAME}, {ACTIVE_TEMPLATE_NAME}",
-    )
+    print(f"Imported templates: {', '.join(names)}")
+
+
+def import_templates(api):
+    passes = 2 if TEMPLATE_ONLY else 1
+    for pass_number in range(1, passes + 1):
+        for path, names in TEMPLATES:
+            import_template(api, path, names)
+        if passes > 1:
+            print(f"Template import pass {pass_number} completed")
 
 
 def get_or_create_host_group(api):
@@ -291,15 +308,21 @@ def main():
         authenticated=False,
     )
 
-    import_template(api)
-    passive_template_id = get_template_id(api, PASSIVE_TEMPLATE_NAME)
-    active_template_id = get_template_id(api, ACTIVE_TEMPLATE_NAME)
+    import_templates(api)
+    template_ids = {
+        name: get_template_id(api, name)
+        for _, names in TEMPLATES
+        for name in names
+    }
+    passive_template_id = template_ids[PASSIVE_TEMPLATE_NAME]
+    active_template_id = template_ids[ACTIVE_TEMPLATE_NAME]
     if TEMPLATE_ONLY:
-        print(
-            "Validated templates: "
-            f"{PASSIVE_TEMPLATE_NAME} ({passive_template_id}), "
-            f"{ACTIVE_TEMPLATE_NAME} ({active_template_id})",
+        validated = ", ".join(
+            f"{name} ({template_ids[name]})"
+            for _, names in TEMPLATES
+            for name in names
         )
+        print(f"Validated templates: {validated}")
         return
 
     group_id = get_or_create_host_group(api)

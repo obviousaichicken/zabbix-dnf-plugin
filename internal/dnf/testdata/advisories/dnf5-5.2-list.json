@@ -1,0 +1,16 @@
+[
+  {
+    "name": "FEDORA-2026-6c99aaa6d3",
+    "type": "security",
+    "severity": "Important",
+    "nevra": "krb5-libs-1.21.3-7.fc42.x86_64",
+    "buildtime": "2026-05-14 04:02:29"
+  },
+  {
+    "name": "FEDORA-2026-11d7d4d8f3",
+    "type": "security",
+    "severity": "Moderate",
+    "nevra": "vim-data-2:9.2.390-1.fc42.noarch",
+    "buildtime": "2026-05-07 01:26:58"
+  }
+]

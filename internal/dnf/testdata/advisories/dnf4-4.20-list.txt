@@ -1,0 +1,3 @@
+  RLSA-2026:55432 Important/Sec. curl-8.12.1-4.el10_2.4.x86_64
+  RLSA-2026:59380 Moderate/Sec.  attr-2.6.0-1.el10_2.x86_64
+  RLSA-2026:57015 Moderate/Sec.  glib2-2.80.4-12.el10_2.21.x86_64

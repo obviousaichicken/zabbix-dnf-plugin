@@ -1,0 +1,50 @@
+ARG BASE_IMAGE=debian:13
+
+FROM golang:1.27 AS builder
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/zabbix-dnf-plugin ./cmd/agent && \
+    cd /out && \
+    sha256sum zabbix-dnf-plugin > zabbix-dnf-plugin.sha256
+
+FROM ${BASE_IMAGE}
+
+ARG AGENT_CONFIG=.dev/zabbix_agent2.conf
+ARG ZABBIX_RELEASE_URL
+
+RUN set -eux; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates \
+        coreutils \
+        curl \
+        passwd \
+        util-linux; \
+    curl -fsSL -o /tmp/zabbix-release.deb "$ZABBIX_RELEASE_URL"; \
+    dpkg -i /tmp/zabbix-release.deb; \
+    rm /tmp/zabbix-release.deb; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zabbix-agent2; \
+    apt-get clean
+
+ENV HOME=/var/lib/zabbix
+
+COPY ${AGENT_CONFIG} /etc/zabbix/zabbix_agent2.conf
+COPY dnf.conf /tmp/release/dnf.conf
+COPY install.sh /tmp/install.sh
+COPY --from=builder /out/ /tmp/release/
+
+RUN RELEASE_URL=file:///tmp/release \
+        SKIP_SERVICE_RESTART=1 \
+        /tmp/install.sh && \
+    rm /tmp/install.sh && \
+    rm -r /tmp/release
+
+EXPOSE 10050
+
+ENTRYPOINT ["/usr/sbin/zabbix_agent2", "-f", "-c", "/etc/zabbix/zabbix_agent2.conf"]

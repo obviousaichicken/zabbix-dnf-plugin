@@ -13,5 +13,6 @@
 !.dev/
 !.dev/zabbix_agent2.conf
 !.dev/zabbix_agent2_active.conf
+!.dev/Dockerfile.apt
 !.dev/installer-test/
 !.dev/installer-test/dnf

@@ -1,0 +1,9 @@
+libc6:
+  Installed: 2.36-9+deb12u14
+  Candidate: 2.36-9+deb12u14
+  Version table:
+ *** 2.36-9+deb12u14 500
+        500 http://deb.debian.org/debian bookworm/main amd64 Packages
+        100 /var/lib/dpkg/status
+     2.36-9+deb12u7 500
+        500 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages

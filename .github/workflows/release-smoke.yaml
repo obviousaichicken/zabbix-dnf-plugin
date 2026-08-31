@@ -18,41 +18,81 @@ jobs:
         include:
           - name: Zabbix 7.0 / UBI 9 / DNF4
             image: registry.access.redhat.com/ubi9/ubi:latest
+            package-family: rpm
             zabbix-release: https://repo.zabbix.com/zabbix/7.0/rhel/9/x86_64/zabbix-release-latest.el9.noarch.rpm
           - name: Zabbix 7.0 / Fedora 44 / DNF5
             image: fedora:44
+            package-family: rpm
             zabbix-release: https://repo.zabbix.com/zabbix/7.0/rhel/10/x86_64/zabbix-release-latest.el10.noarch.rpm
           - name: Zabbix 7.4 / UBI 9 / DNF4
             image: registry.access.redhat.com/ubi9/ubi:latest
+            package-family: rpm
             zabbix-release: https://repo.zabbix.com/zabbix/7.4/release/rhel/9/noarch/zabbix-release-latest.el9.noarch.rpm
           - name: Zabbix 7.4 / Fedora 44 / DNF5
             image: fedora:44
+            package-family: rpm
             zabbix-release: https://repo.zabbix.com/zabbix/7.4/release/rhel/10/noarch/zabbix-release-latest.el10.noarch.rpm
+          - name: Zabbix 7.0 / Debian 13 / APT
+            image: debian:13
+            package-family: deb
+            zabbix-release: https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-release/zabbix-release_latest_7.0+debian13_all.deb
+          - name: Zabbix 7.4 / Ubuntu 26.04 / APT
+            image: ubuntu:26.04
+            package-family: deb
+            zabbix-release: https://repo.zabbix.com/zabbix/7.4/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_7.4+ubuntu26.04_all.deb
 
     steps:
       - name: Install published release and verify plugin
         env:
           IMAGE: ${{ matrix.image }}
-          ZABBIX_RELEASE_RPM: ${{ matrix.zabbix-release }}
+          PACKAGE_FAMILY: ${{ matrix.package-family }}
+          ZABBIX_RELEASE_PACKAGE: ${{ matrix.zabbix-release }}
         run: |
           release_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download"
 
           docker pull "$IMAGE"
           docker run --rm \
+            --env PACKAGE_FAMILY \
             --env RELEASE_URL="$release_url" \
-            --env ZABBIX_RELEASE_RPM \
+            --env ZABBIX_RELEASE_PACKAGE \
             "$IMAGE" \
             /bin/bash -euo pipefail -c '
-              dnf -q install -y --allowerasing \
-                ca-certificates curl util-linux >/dev/null
-              curl -fsSL \
-                -o /tmp/zabbix-release.rpm \
-                "$ZABBIX_RELEASE_RPM"
-              rpm -Uvh /tmp/zabbix-release.rpm >/dev/null
-              dnf -q install -y \
-                --setopt=install_weak_deps=False \
-                zabbix-agent2 >/dev/null
-              dnf -q makecache >/dev/null
+              case "$PACKAGE_FAMILY" in
+                rpm)
+                  dnf -q install -y --allowerasing \
+                    ca-certificates curl util-linux >/dev/null
+                  curl -fsSL \
+                    -o /tmp/zabbix-release.rpm \
+                    "$ZABBIX_RELEASE_PACKAGE"
+                  rpm -Uvh /tmp/zabbix-release.rpm >/dev/null
+                  dnf -q install -y \
+                    --setopt=install_weak_deps=False \
+                    zabbix-agent2 >/dev/null
+                  dnf -q makecache >/dev/null
+                  item_keys="dnf.get packages.get dnf.advisories.get"
+                  expected_backend=dnf
+                  ;;
+                deb)
+                  export DEBIAN_FRONTEND=noninteractive
+                  apt-get update >/dev/null
+                  apt-get install -y --no-install-recommends \
+                    ca-certificates curl passwd util-linux >/dev/null
+                  curl -fsSL \
+                    -o /tmp/zabbix-release.deb \
+                    "$ZABBIX_RELEASE_PACKAGE"
+                  dpkg -i /tmp/zabbix-release.deb >/dev/null
+                  apt-get update >/dev/null
+                  apt-get install -y --no-install-recommends \
+                    zabbix-agent2 >/dev/null
+                  item_keys="packages.get"
+                  expected_backend=apt
+                  ;;
+                *)
+                  printf "unsupported package family: %s\n" \
+                    "$PACKAGE_FAMILY" >&2
+                  exit 1
+                  ;;
+              esac
 
               curl -fL --retry 3 --retry-all-errors \
                 -o /tmp/install.sh \
@@ -66,17 +106,39 @@ jobs:
               test "$(stat -c "%U:%G" "$zabbix_home")" = zabbix:zabbix
 
               zabbix_agent2 -T -c /etc/zabbix/zabbix_agent2.conf
-              output="$(runuser -u zabbix -- \
-                zabbix_agent2 \
-                -c /etc/zabbix/zabbix_agent2.conf \
-                -t dnf.get)"
-              case "$output" in
-                *"[s|"*"\"collection\":{\"complete\":true"*) ;;
-                *)
-                  printf "dnf.get did not return a complete collection: %s\n" \
-                    "$output" >&2
-                  exit 1
-                  ;;
-              esac
-              printf "%s\n" "$output"
+              for item_key in $item_keys; do
+                output="$(runuser -u zabbix -- \
+                  zabbix_agent2 \
+                  -c /etc/zabbix/zabbix_agent2.conf \
+                  -t "$item_key")"
+                case "$output" in
+                  *"[s|"*"\"collection\":{\"complete\":true"*) ;;
+                  *)
+                    printf "%s did not return a complete collection: %s\n" \
+                      "$item_key" "$output" >&2
+                    exit 1
+                    ;;
+                esac
+                if [ "$item_key" = packages.get ]; then
+                  case "$output" in
+                    *"\"backend\":\"${expected_backend}\"") ;;
+                    *)
+                      printf "%s did not report backend %s: %s\n" \
+                        "$item_key" "$expected_backend" "$output" >&2
+                      exit 1
+                      ;;
+                  esac
+                fi
+                if [ "$item_key" = dnf.advisories.get ]; then
+                  case "$output" in
+                    *'"schema_version":1'*'"advisories":['*) ;;
+                    *)
+                      printf "%s did not return advisory schema 1: %s\n" \
+                        "$item_key" "$output" >&2
+                      exit 1
+                      ;;
+                  esac
+                fi
+                printf "%s\n" "$output"
+              done
             '

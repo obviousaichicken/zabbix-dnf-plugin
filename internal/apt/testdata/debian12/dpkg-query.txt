@@ -1,0 +1,1 @@
+libc6:amd64|amd64|2.36-9+deb12u14|installed
